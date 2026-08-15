@@ -1,5 +1,7 @@
 # GN-183 Waypoint
 
+[![CI](https://github.com/arunkumar-mourougappane/GN-183-Waypoint-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/arunkumar-mourougappane/GN-183-Waypoint-rs/actions/workflows/ci.yml)
+
 GN-183 Waypoint is a high-precision telemetry and NMEA 0183 debugging suite built in Rust. Designed to ingest raw GPS data streams via Serial COM, TCP networks, or static log files, Waypoint translates continuous comma-separated payloads into a real-time navigational dashboard.
 
 Engineered for speed and memory safety, it allows developers to visually plot geodetic coordinates on a live tracking map while simultaneously monitoring critical array parameters like HDOP, satellite lock geometry, speed, altitude, and 2D/3D fix states.
@@ -66,7 +68,15 @@ The TUI writes no logs to the terminal (they would corrupt the display); set
 
 ```sh
 cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+cargo fmt --all --check
 ```
 
 `waypoint-tui` renders its whole dashboard through ratatui's `TestBackend`, so the
 layout is covered by tests without needing a terminal.
+
+CI runs those same three commands on every push and pull request, with the test
+job spanning Linux, macOS and Windows. Building on Linux needs a few system
+packages that the other platforms ship with their SDKs — `libudev-dev` for
+`serialport`, and the xkb/xcb headers for the windowing stack; see
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) for the exact list.

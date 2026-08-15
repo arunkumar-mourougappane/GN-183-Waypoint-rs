@@ -226,7 +226,13 @@ mod tests {
         let lines = drain(rx).await;
 
         assert_eq!(lines, 10);
-        assert!(started.elapsed() < Duration::from_millis(200));
+        // Paced at 1x this log spans 9 s, so anything near-instant proves the
+        // point; the bound is loose so a contended CI runner cannot flake it.
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "instant load paced itself: took {:?}",
+            started.elapsed()
+        );
     }
 
     /// The whole point of the shared handle: speeding up mid-replay must take
