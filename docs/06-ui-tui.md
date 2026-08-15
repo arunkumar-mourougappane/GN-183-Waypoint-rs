@@ -83,6 +83,25 @@ already there.
 - Because logs would corrupt the alternate screen, tracing output is only
   enabled when `WAYPOINT_LOG` names a file.
 
+## Parity with the GUI
+
+Both frontends render the same `GnssState`, so neither should quietly omit a
+figure the other reports. The status and trip panels carry the same values —
+the terminal pairs the ones that are read together (moving/stopped, average
+moving/overall, HDOP/satellites, fixes/rejected) rather than spending a row
+each, and folds geoid separation onto the altitude and the date onto the time.
+A test asserts every field is present, because a missing readout is invisible
+until someone goes looking for it.
+
+Three things are deliberately GUI-only, because a terminal cannot do them
+honestly rather than because they were forgotten:
+
+| | Reason |
+|---|---|
+| Polar sky view | Replaced by the satellite table: azimuth and elevation do not survive a character grid, but the same per-satellite figures do |
+| Map zoom and pan | The track canvas auto-fits its bounding box instead; there is no pointer to drag and no tiles to zoom into |
+| Runtime source picker | Sources are chosen with the command-line flags. A terminal form for serial ports, addresses and file paths is a lot of machinery for something the shell already does well |
+
 ## Why not reuse GUI panel code
 
 `waypoint-gui` and `waypoint-tui` render the same `GnssState` but through

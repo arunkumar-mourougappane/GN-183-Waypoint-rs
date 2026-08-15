@@ -339,7 +339,12 @@ fn draw_status(frame: &mut Frame, area: Rect, state: &GnssState, transport: &Tra
             "Altitude",
             &state
                 .altitude_m
-                .map(|a| format!("{a:.1} m"))
+                .map(|a| match state.geoid_separation_m {
+                    // Geoid separation shares the row: it is only ever read
+                    // alongside the altitude it corrects.
+                    Some(geoid) => format!("{a:.1} m MSL  (geoid {geoid:+.1})"),
+                    None => format!("{a:.1} m MSL"),
+                })
                 .unwrap_or_else(|| "-".into()),
         ),
         value_line(
@@ -380,10 +385,13 @@ fn draw_status(frame: &mut Frame, area: Rect, state: &GnssState, transport: &Tra
         ),
         value_line(
             "UTC",
-            &state
-                .fix_time
-                .map(|t| t.format("%H:%M:%S").to_string())
-                .unwrap_or_else(|| "-".into()),
+            &match (state.fix_time, state.fix_date) {
+                (Some(t), Some(d)) => {
+                    format!("{}  {}", t.format("%H:%M:%S%.3f"), d.format("%Y-%m-%d"))
+                }
+                (Some(t), None) => t.format("%H:%M:%S%.3f").to_string(),
+                _ => "-".to_string(),
+            },
         ),
     ];
 
@@ -468,7 +476,13 @@ fn draw_satellites(frame: &mut Frame, area: Rect, state: &GnssState) {
                         .map(|a| format!("{a:>3.0}°"))
                         .unwrap_or_else(|| "   -".into()),
                 ),
-                Cell::from(format!("{:>2.0} {bar}", snr)).style(Style::default().fg(snr_color)),
+                // A satellite in view but untracked reports no SNR at all,
+                // which is a different thing from a measured zero.
+                Cell::from(match sat.snr {
+                    Some(value) => format!("{value:>2.0} {bar}"),
+                    None => " -".to_string(),
+                })
+                .style(Style::default().fg(snr_color)),
                 Cell::from(if sat.used_in_fix { "✓" } else { " " })
                     .style(Style::default().fg(Color::Green)),
             ])
@@ -588,17 +602,30 @@ fn draw_trip(frame: &mut Frame, area: Rect, state: &GnssState) {
     let trip = &state.trip;
     let distance_km = trip.distance_m / 1000.0;
 
+    // Paired where the two halves are read together, so the panel carries the
+    // same figures as the GUI's without needing more rows than it has.
     let lines = vec![
         value_line("Distance", &format!("{distance_km:.3} km")),
         value_line("Elapsed", &format_duration(trip.elapsed_secs())),
-        value_line("Moving", &format_duration(trip.moving_secs)),
-        value_line("Stopped", &format_duration(trip.stopped_secs())),
+        value_line(
+            "Moving",
+            &format!(
+                "{} / {} stopped",
+                format_duration(trip.moving_secs),
+                format_duration(trip.stopped_secs())
+            ),
+        ),
         value_line(
             "Avg speed",
-            &trip
-                .avg_moving_speed_knots()
-                .map(|s| format!("{s:.1} kt moving"))
-                .unwrap_or_else(|| "-".into()),
+            &format!(
+                "{} mov / {} all",
+                trip.avg_moving_speed_knots()
+                    .map(|s| format!("{s:.1}"))
+                    .unwrap_or_else(|| "-".into()),
+                trip.avg_overall_speed_knots()
+                    .map(|s| format!("{s:.1} kt"))
+                    .unwrap_or_else(|| "- kt".into()),
+            ),
         ),
         value_line("Max speed", &format!("{:.1} kt", trip.max_speed_knots)),
         value_line(
@@ -609,13 +636,21 @@ fn draw_trip(frame: &mut Frame, area: Rect, state: &GnssState) {
             ),
         ),
         value_line(
-            "Avg HDOP",
-            &trip
-                .avg_hdop()
-                .map(|h| format!("{h:.2}"))
-                .unwrap_or_else(|| "-".into()),
+            "Avg qual",
+            &format!(
+                "HDOP {} · {} sats",
+                trip.avg_hdop()
+                    .map(|h| format!("{h:.2}"))
+                    .unwrap_or_else(|| "-".into()),
+                trip.avg_sats_used()
+                    .map(|s| format!("{s:.1}"))
+                    .unwrap_or_else(|| "-".into()),
+            ),
         ),
-        value_line("Rejected", &format!("{} jump(s)", trip.rejected_jumps)),
+        value_line(
+            "Fixes",
+            &format!("{} · {} rejected", trip.fix_count, trip.rejected_jumps),
+        ),
     ];
 
     frame.render_widget(
@@ -636,26 +671,33 @@ fn format_duration(seconds: f64) -> String {
 
 /// Raw sentence view — the reason this is a debugger and not just a tracker.
 fn draw_raw(frame: &mut Frame, area: Rect, state: &GnssState) {
-    let capacity = area.height.saturating_sub(2) as usize;
+    // What has been seen, by type. The GUI carries this in its side panel; here
+    // it heads the sentences it describes, which is where it is wanted anyway.
+    let mut header: Vec<Span> = vec![Span::styled("seen  ", Style::default().fg(Color::DarkGray))];
+    for (kind, count) in &state.counters.by_type {
+        header.push(Span::styled(
+            format!("{kind}×{count}  "),
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+
+    // One row for that header, one for each border.
+    let capacity = area.height.saturating_sub(3) as usize;
     let skip = state.raw.len().saturating_sub(capacity);
 
-    let lines: Vec<Line> = state
-        .raw
-        .iter()
-        .skip(skip)
-        .map(|raw| {
-            let (tag, color) = match &raw.outcome {
-                SentenceOutcome::Decoded(kind) => (kind.clone(), Color::Green),
-                SentenceOutcome::ChecksumFailed => ("CRC".into(), Color::Red),
-                SentenceOutcome::Unsupported => ("SKIP".into(), Color::DarkGray),
-                SentenceOutcome::ParseError(_) => ("ERR".into(), Color::LightRed),
-            };
-            Line::from(vec![
-                Span::styled(format!("{tag:<5} "), Style::default().fg(color)),
-                Span::raw(raw.text.clone()),
-            ])
-        })
-        .collect();
+    let mut lines: Vec<Line> = vec![Line::from(header)];
+    lines.extend(state.raw.iter().skip(skip).map(|raw| {
+        let (tag, color) = match &raw.outcome {
+            SentenceOutcome::Decoded(kind) => (kind.clone(), Color::Green),
+            SentenceOutcome::ChecksumFailed => ("CRC".into(), Color::Red),
+            SentenceOutcome::Unsupported => ("SKIP".into(), Color::DarkGray),
+            SentenceOutcome::ParseError(_) => ("ERR".into(), Color::LightRed),
+        };
+        Line::from(vec![
+            Span::styled(format!("{tag:<5} "), Style::default().fg(color)),
+            Span::raw(raw.text.clone()),
+        ])
+    }));
 
     frame.render_widget(
         Paragraph::new(lines).block(
@@ -866,5 +908,42 @@ mod tests {
         println!("{out}");
         assert!(out.contains("Raw sentences"));
         assert!(out.contains("$GN"));
+        // The per-type tally the GUI shows in its side panel.
+        assert!(out.contains("GGA×"), "missing sentence tally in:\n{out}");
+    }
+
+    /// Both frontends read the same state, so neither should be quietly missing
+    /// a figure the other reports.
+    #[test]
+    fn status_and_trip_carry_the_same_figures_as_the_gui() {
+        let out = render(BottomPanel::Plots);
+
+        for field in [
+            "Position", "Altitude", "geoid", "Speed", "Course", "Heading", "HDOP", "PDOP", "UTC",
+            "Sats",
+        ] {
+            assert!(
+                out.contains(field),
+                "status is missing {field:?} in:\n{out}"
+            );
+        }
+        for field in [
+            "Distance",
+            "Elapsed",
+            "Moving",
+            "stopped",
+            "Avg speed",
+            "all",
+            "Max speed",
+            "Elevation",
+            "Avg qual",
+            "sats",
+            "Fixes",
+            "rejected",
+        ] {
+            assert!(out.contains(field), "trip is missing {field:?} in:\n{out}");
+        }
+        // The date belongs with the time it qualifies.
+        assert!(out.contains("2026-08-15"), "missing date in:\n{out}");
     }
 }

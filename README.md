@@ -67,6 +67,11 @@ can honour:
 Rate and pause apply to a replay already in progress, without restarting it and
 losing the track accumulated so far.
 
+Both frontends show the same figures. The polar sky view, map zoom and the
+runtime source picker are GUI-only — see
+[`docs/06-ui-tui.md`](docs/06-ui-tui.md) for why each is a deliberate omission
+rather than a gap.
+
 ### TUI keys
 
 `q` quit · `r` reset trip · `n` toggle the plots/raw-sentence panel.
