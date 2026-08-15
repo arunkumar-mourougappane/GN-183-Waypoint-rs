@@ -1,0 +1,54 @@
+# Roadmap
+
+File replay is the development backbone throughout: it needs no hardware and makes
+both frontends testable against fixed, repeatable input. `assets/sample.nmea` is a
+synthetic 12-minute drive (multi-constellation GGA/RMC/GSA/GSV/VTG, a 2D-fix
+dropout, and two deliberately corrupt sentences) used for exactly that.
+
+## Phase 1 — Core, no UI ✅
+
+- Cargo workspace per [`03-architecture.md`](03-architecture.md).
+- `waypoint-core`: checksum validation, `nmea`-crate integration, `GnssState`,
+  and the file source.
+
+## Phase 2 — GUI map + gauges ✅
+
+- `waypoint-gui`: `eframe` shell, `walkers` map with the track drawn through a
+  `Plugin`, status panel, and timestamp-paced file replay.
+
+## Phase 3 — TUI frontend ✅
+
+- `waypoint-tui`: braille-canvas track, status block, sparklines, satellite
+  table. Rendering is covered by tests through ratatui's `TestBackend`, which
+  also proved the core/frontend boundary holds.
+
+## Phase 4 — Live sources ✅
+
+- Serial (`serialport` on a blocking task) and TCP sources, both with
+  reconnect/backoff and status surfaced to the UI. Source selection from the CLI
+  in both frontends, and live from the GUI's picker.
+
+## Phase 5 — Full parameter set + trip stats ✅
+
+- GSA/GSV parsing with GSV group reassembly and GSA cycle handling, sky view,
+  signal bars, per-constellation counts, DOP triple with quality bands, and the
+  trip-statistics engine with its data-quality guards.
+
+## Phase 6 — Polish (open)
+
+- Offline map tiles (`.pmtiles`) for field use with no connectivity.
+- Session export (track + trip stats as JSON via `serde`) and replay from an
+  exported session.
+- GST-based accuracy display as an advanced panel.
+- Expose `TripConfig` (moving-speed threshold, jump rejection, elevation noise
+  floor) as UI settings rather than defaults only.
+- Sentence filtering in the raw view — a debugger benefits from "show me only
+  the GSA sentences" when a receiver is misbehaving.
+
+## Explicitly deferred
+
+- Simultaneous GUI+TUI against one live session. `Engine` already supports
+  multiple subscribers, so this is a frontend-launcher question, not an
+  architectural one — not built until there is a concrete need.
+- AIS, route planning, receiver configuration — see
+  [`00-overview.md`](00-overview.md) non-goals.
