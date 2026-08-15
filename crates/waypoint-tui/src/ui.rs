@@ -9,7 +9,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::canvas::{Canvas, Points};
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Sparkline, Table};
 use waypoint_core::{
-    Constellation, FixMode, GnssState, KNOTS_TO_KMH, SentenceOutcome, hdop_rating,
+    Constellation, FixMode, GnssState, KNOTS_TO_KMH, SentenceOutcome, StatusTone, hdop_rating,
 };
 
 use crate::Transport;
@@ -98,10 +98,14 @@ fn draw_header(frame: &mut Frame, area: Rect, state: &GnssState, transport: &Tra
         state.source_label.clone()
     };
 
-    let connection_color = if state.connection.is_healthy() {
-        Color::Green
-    } else {
-        Color::Red
+    // A recording that reached its end is not a fault, so it must not read as
+    // one; only a live link going down is red.
+    let controls = transport.controls();
+    let connection_color = match state.connection.tone(controls) {
+        StatusTone::Good => Color::Green,
+        StatusTone::Warning => Color::Yellow,
+        StatusTone::Bad => Color::Red,
+        StatusTone::Neutral => Color::DarkGray,
     };
 
     let mut spans = vec![
@@ -111,7 +115,7 @@ fn draw_header(frame: &mut Frame, area: Rect, state: &GnssState, transport: &Tra
         ),
         Span::raw(format!(" {source}  ")),
         Span::styled(
-            state.connection.label(),
+            state.connection.label_for(controls),
             Style::default().fg(connection_color),
         ),
         Span::raw("   "),
@@ -661,6 +665,10 @@ mod tests {
         terminal
             .draw(|frame| draw(frame, &state, bottom, transport))
             .unwrap();
+        buffer_text(&terminal)
+    }
+
+    fn buffer_text(terminal: &Terminal<TestBackend>) -> String {
         let buffer = terminal.backend().buffer();
         (0..buffer.area.height)
             .map(|y| {
@@ -726,6 +734,34 @@ mod tests {
 
         assert!(out.contains("PAUSED"), "missing pause state in:\n{out}");
         assert!(out.contains("space resume"));
+    }
+
+    /// The connection metaphor does not belong to a file: it is opened and
+    /// reaches an end, it does not connect or drop out.
+    #[test]
+    fn recording_status_avoids_connection_wording() {
+        let mut state = sample_state();
+        state.connection = waypoint_core::ConnectionStatus::Disconnected;
+
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        terminal
+            .draw(|frame| {
+                draw(
+                    frame,
+                    &state,
+                    BottomPanel::Plots,
+                    &Transport::Replay {
+                        speed: 1.0,
+                        paused: false,
+                        progress: Some(1.0),
+                    },
+                )
+            })
+            .unwrap();
+        let out = buffer_text(&terminal);
+
+        assert!(out.contains("End of log"), "expected end-of-log in:\n{out}");
+        assert!(!out.contains("Disconnected"));
     }
 
     /// A receiver gets liveness and acquisition instead, and none of the

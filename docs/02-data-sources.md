@@ -40,7 +40,13 @@ serial-vs-TCP but **live-vs-recorded**, and the two afford opposite things:
 `SourceConfig::controls()` returns a `SourceControls` (`Live`, `Replay`, or
 `Instant`) and the frontends branch on that, so neither offers a control the
 source could not honour: no pause button on a receiver, no staleness warning on
-a finished log. See [`05-ui-gui.md`](05-ui-gui.md) and
+a finished log.
+
+The vocabulary follows the same split. A file is *opened* and reaches an *end of
+log*; only a receiver *connects* and *disconnects*, and only its dropping out is
+an error worth colouring red. `ConnectionStatus::label_for` and
+`ConnectionStatus::tone` carry that wording and colouring so both frontends
+phrase it identically, while the plain `label()` stays technical for logs. See [`05-ui-gui.md`](05-ui-gui.md) and
 [`06-ui-tui.md`](06-ui-tui.md) for what each surfaces.
 
 ## Serial

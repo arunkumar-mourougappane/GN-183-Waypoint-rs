@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use nmea::sentences::{FixType as NmeaFixType, GnssType};
 
+use crate::source::SourceControls;
 use crate::trip::TripStats;
 
 /// Cap on retained track points. Trip statistics are accumulated incrementally,
@@ -207,7 +208,19 @@ pub enum ConnectionStatus {
     },
 }
 
+/// How a status should read to the eye, so both frontends colour it alike.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatusTone {
+    Neutral,
+    Good,
+    Warning,
+    Bad,
+}
+
 impl ConnectionStatus {
+    /// Technical wording, for logs. The UI should use [`Self::label_for`], which
+    /// adapts to the source — a log is opened and ends, it does not connect and
+    /// disconnect.
     pub fn label(&self) -> String {
         match self {
             ConnectionStatus::Idle => "Idle".to_string(),
@@ -216,6 +229,44 @@ impl ConnectionStatus {
             ConnectionStatus::Reconnecting { attempt } => format!("Reconnecting (#{attempt})"),
             ConnectionStatus::Disconnected => "Disconnected".to_string(),
             ConnectionStatus::Failed { message } => format!("Failed: {message}"),
+        }
+    }
+
+    /// Wording adapted to the source. "Disconnected" is alarming for a receiver
+    /// and simply wrong for a log, which reaches its end rather than dropping
+    /// out; "connecting" describes a link, not a file being opened.
+    pub fn label_for(&self, controls: Option<SourceControls>) -> String {
+        match controls {
+            Some(SourceControls::Replay) => match self {
+                ConnectionStatus::Connecting => "Opening".to_string(),
+                ConnectionStatus::Connected => "Replaying".to_string(),
+                ConnectionStatus::Disconnected => "End of log".to_string(),
+                other => other.label(),
+            },
+            Some(SourceControls::Instant) => match self {
+                ConnectionStatus::Connecting => "Opening".to_string(),
+                ConnectionStatus::Connected => "Loading".to_string(),
+                ConnectionStatus::Disconnected => "Loaded".to_string(),
+                other => other.label(),
+            },
+            // A live receiver genuinely does connect and drop out.
+            Some(SourceControls::Live) | None => self.label(),
+        }
+    }
+
+    /// A finished recording is not a fault, so it must not read like one.
+    pub fn tone(&self, controls: Option<SourceControls>) -> StatusTone {
+        match self {
+            ConnectionStatus::Idle => StatusTone::Neutral,
+            ConnectionStatus::Connected => StatusTone::Good,
+            ConnectionStatus::Connecting | ConnectionStatus::Reconnecting { .. } => {
+                StatusTone::Warning
+            }
+            ConnectionStatus::Failed { .. } => StatusTone::Bad,
+            ConnectionStatus::Disconnected => match controls {
+                Some(SourceControls::Replay) | Some(SourceControls::Instant) => StatusTone::Neutral,
+                _ => StatusTone::Bad,
+            },
         }
     }
 
@@ -297,6 +348,66 @@ pub enum SentenceOutcome {
     ChecksumFailed,
     Unsupported,
     ParseError(String),
+}
+
+#[cfg(test)]
+mod status_tests {
+    use super::*;
+
+    /// A log is opened and ends; only a link connects and drops out.
+    #[test]
+    fn wording_follows_the_source() {
+        let finished = ConnectionStatus::Disconnected;
+        assert_eq!(
+            finished.label_for(Some(SourceControls::Live)),
+            "Disconnected"
+        );
+        assert_eq!(
+            finished.label_for(Some(SourceControls::Replay)),
+            "End of log"
+        );
+        assert_eq!(finished.label_for(Some(SourceControls::Instant)), "Loaded");
+
+        let opening = ConnectionStatus::Connecting;
+        assert_eq!(opening.label_for(Some(SourceControls::Live)), "Connecting");
+        assert_eq!(opening.label_for(Some(SourceControls::Replay)), "Opening");
+
+        let running = ConnectionStatus::Connected;
+        assert_eq!(running.label_for(Some(SourceControls::Live)), "Connected");
+        assert_eq!(running.label_for(Some(SourceControls::Replay)), "Replaying");
+    }
+
+    /// Reaching the end of a recording is not a fault and must not be coloured
+    /// like one; a live link dropping out is.
+    #[test]
+    fn a_finished_recording_reads_as_neutral() {
+        let finished = ConnectionStatus::Disconnected;
+        assert_eq!(
+            finished.tone(Some(SourceControls::Replay)),
+            StatusTone::Neutral
+        );
+        assert_eq!(
+            finished.tone(Some(SourceControls::Instant)),
+            StatusTone::Neutral
+        );
+        assert_eq!(finished.tone(Some(SourceControls::Live)), StatusTone::Bad);
+    }
+
+    /// A failure to open is still a failure, whatever the source.
+    #[test]
+    fn failures_stay_loud_for_every_source() {
+        let failed = ConnectionStatus::Failed {
+            message: "no such file".into(),
+        };
+        for controls in [
+            SourceControls::Live,
+            SourceControls::Replay,
+            SourceControls::Instant,
+        ] {
+            assert_eq!(failed.tone(Some(controls)), StatusTone::Bad);
+            assert!(failed.label_for(Some(controls)).contains("no such file"));
+        }
+    }
 }
 
 /// Accumulates the multi-sentence GSV group for one constellation so the UI

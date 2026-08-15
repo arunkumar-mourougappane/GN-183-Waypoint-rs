@@ -92,5 +92,7 @@ The top bar adapts to what the source can do (see
   session can be started either from the command line or adjusted live in the
   GUI. Serial ports come from a rescannable dropdown; log files are chosen
   through a native file dialog (`rfd`), not a typed path.
-- Connection-status indicator reflecting `waypoint-core`'s reconnect/error state
-  (see [`03-architecture.md`](03-architecture.md)).
+- Status indicator reflecting `waypoint-core`'s state, worded for the source:
+  a receiver shows Connecting/Connected/Reconnecting/Disconnected, while a log
+  shows Opening/Replaying/End of log. The submit buttons follow suit — Open and
+  Close for a file, Connect and Disconnect for a receiver.

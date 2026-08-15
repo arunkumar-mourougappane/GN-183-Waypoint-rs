@@ -127,6 +127,17 @@ pub enum Transport {
 }
 
 impl Transport {
+    /// What the source can do, for the parts of the UI that phrase themselves
+    /// around it rather than branching on the variant directly.
+    pub fn controls(&self) -> Option<SourceControls> {
+        match self {
+            Transport::Idle => None,
+            Transport::Live => Some(SourceControls::Live),
+            Transport::Replay { .. } => Some(SourceControls::Replay),
+            Transport::Instant => Some(SourceControls::Instant),
+        }
+    }
+
     fn sample(engine: &Engine) -> Self {
         match engine.controls() {
             None => Transport::Idle,

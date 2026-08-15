@@ -41,7 +41,8 @@ pub use source::{
 };
 pub use state::{
     ConnectionStatus, Constellation, FixMode, FixQuality, GnssState, MetricSample, RawSentence,
-    STALE_AFTER, SatelliteInfo, SentenceCounters, SentenceOutcome, StreamHealth, TrackPoint,
+    STALE_AFTER, SatelliteInfo, SentenceCounters, SentenceOutcome, StatusTone, StreamHealth,
+    TrackPoint,
 };
 pub use trip::{TripConfig, TripStats, haversine_distance_m};
 

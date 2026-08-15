@@ -7,8 +7,8 @@ use tokio::runtime::{Handle, Runtime};
 use walkers::sources::OpenStreetMap;
 use walkers::{HttpOptions, HttpTiles, Map, MapMemory};
 use waypoint_core::{
-    COMMON_BAUD_RATES, ConnectionStatus, Engine, FileMode, ReplayControl, SourceConfig,
-    SourceControls, TripConfig, available_serial_ports,
+    COMMON_BAUD_RATES, Engine, FileMode, ReplayControl, SourceConfig, SourceControls, StatusTone,
+    TripConfig, available_serial_ports,
 };
 
 use crate::map::{TrackPlugin, map_center};
@@ -42,7 +42,7 @@ enum SidePanel {
     Raw,
 }
 
-/// Draft source settings, applied only when "Connect" is pressed.
+/// Draft source settings, applied only when the form is submitted.
 struct SourceForm {
     kind: SourceKind,
     serial_port: String,
@@ -277,10 +277,15 @@ impl WaypointApp {
 
         ui.add_space(6.0);
         ui.horizontal(|ui| {
-            if ui.button("Connect").clicked() {
+            // A file is opened and closed; only a receiver is connected to.
+            let (start, stop) = match form.kind {
+                SourceKind::File => ("Open", "Close"),
+                SourceKind::Serial | SourceKind::Tcp => ("Connect", "Disconnect"),
+            };
+            if ui.button(start).clicked() {
                 action = PickerAction::Connect;
             }
-            if ui.button("Disconnect").clicked() {
+            if ui.button(stop).clicked() {
                 action = PickerAction::Disconnect;
             }
         });
@@ -304,16 +309,14 @@ impl eframe::App for WaypointApp {
                 ui.label(RichText::new("WAYPOINT").strong().size(16.0));
                 ui.separator();
 
-                let connection_color = match &state.connection {
-                    ConnectionStatus::Connected => Color32::from_rgb(110, 200, 120),
-                    ConnectionStatus::Connecting | ConnectionStatus::Reconnecting { .. } => {
-                        Color32::from_rgb(230, 180, 60)
-                    }
-                    ConnectionStatus::Idle => Color32::from_gray(140),
-                    _ => Color32::from_rgb(220, 80, 80),
+                let connection_color = match state.connection.tone(controls) {
+                    StatusTone::Good => Color32::from_rgb(110, 200, 120),
+                    StatusTone::Warning => Color32::from_rgb(230, 180, 60),
+                    StatusTone::Bad => Color32::from_rgb(220, 80, 80),
+                    StatusTone::Neutral => Color32::from_gray(140),
                 };
                 ui.label(RichText::new("●").color(connection_color));
-                ui.label(state.connection.label());
+                ui.label(state.connection.label_for(controls));
                 if !state.source_label.is_empty() {
                     ui.weak(&state.source_label);
                 }
