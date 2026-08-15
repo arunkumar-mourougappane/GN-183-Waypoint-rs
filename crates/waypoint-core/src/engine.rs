@@ -10,7 +10,9 @@ use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard};
 use tokio::sync::{mpsc, watch};
 
 use crate::parser::Aggregator;
-use crate::source::{Cancel, FileMode, ReplaySpeed, SourceConfig, SourceEvent, run_source};
+use crate::source::{
+    Cancel, FileMode, ReplayControl, SourceConfig, SourceControls, SourceEvent, run_source,
+};
 use crate::state::{ConnectionStatus, GnssState};
 use crate::trip::TripConfig;
 
@@ -57,19 +59,38 @@ impl Engine {
         self.updates_rx.clone()
     }
 
-    /// Live replay rate of the running source, when it is a paced file replay.
-    /// Frontends adjust this to change speed without restarting the source and
-    /// losing the accumulated track.
-    pub fn replay_speed(&self) -> Option<ReplaySpeed> {
+    /// What the running source can be asked to do. `None` when nothing is
+    /// running, so frontends can hide every transport affordance at once.
+    pub fn controls(&self) -> Option<SourceControls> {
+        self.active
+            .lock()
+            .ok()
+            .and_then(|guard| guard.as_ref().map(|active| active.config.controls()))
+    }
+
+    /// Transport handle of the running source, when it is a paced file replay.
+    /// Frontends drive rate and pause through this, so neither restarts the
+    /// source and loses the accumulated track.
+    pub fn replay_control(&self) -> Option<ReplayControl> {
         self.active.lock().ok().and_then(|guard| {
             guard.as_ref().and_then(|active| match &active.config {
                 SourceConfig::File {
-                    mode: FileMode::Replay { speed },
+                    mode: FileMode::Replay { control },
                     ..
-                } => Some(speed.clone()),
+                } => Some(control.clone()),
                 _ => None,
             })
         })
+    }
+
+    /// Re-run the current source from the beginning. Only meaningful for a
+    /// recording — a live receiver has no beginning to return to.
+    pub fn restart(&self) {
+        if let Some(config) = self.current_source()
+            && !config.controls().is_live()
+        {
+            self.set_source(config);
+        }
     }
 
     pub fn current_source(&self) -> Option<SourceConfig> {

@@ -24,6 +24,25 @@ to the rest of the app — the core parser/state layer only ever consumes
 `SourceEvent`s. This is the seam that keeps `waypoint-core` transport-agnostic (see
 [`03-architecture.md`](03-architecture.md)).
 
+## Live versus recorded
+
+Uniform *ingestion* does not mean a uniform UI. The meaningful split is not
+serial-vs-TCP but **live-vs-recorded**, and the two afford opposite things:
+
+| | Live (serial, TCP) | Recorded (file) |
+|---|---|---|
+| Time base | Real, unrepeatable | Known in advance, replayable |
+| Can be paused / retimed / restarted | No | Yes |
+| Has a position and a length | No | Yes |
+| Can go stale or drop out | Yes | No — it ends, which is not a fault |
+| Acquisition metrics (time to first fix) | Meaningful | Meaningless: the log already contains a fix |
+
+`SourceConfig::controls()` returns a `SourceControls` (`Live`, `Replay`, or
+`Instant`) and the frontends branch on that, so neither offers a control the
+source could not honour: no pause button on a receiver, no staleness warning on
+a finished log. See [`05-ui-gui.md`](05-ui-gui.md) and
+[`06-ui-tui.md`](06-ui-tui.md) for what each surfaces.
+
 ## Serial
 
 - Crate: [`serialport`](https://crates.io/crates/serialport) (v4.9.0) for a
@@ -63,12 +82,17 @@ to the rest of the app — the core parser/state layer only ever consumes
     a real device. This is what makes the file source useful for testing the
     GUI/TUI without hardware.
 
-    The rate is a `ReplaySpeed` handle shared with the frontend rather than a
-    plain `f32`, so it can be changed while the replay runs. Restarting the
-    source to change speed would discard the accumulated track and trip
-    statistics, which is exactly what someone studying a log does not want.
-    Waits are taken in short chunks so a change lands within a tick instead of
-    after the current inter-sentence gap finishes.
+    Transport state lives in a `ReplayControl` handle shared with the frontend:
+    rate, pause, and position. Restarting the source to change any of them would
+    discard the accumulated track and trip statistics, which is exactly what
+    someone studying a log does not want. Waits are taken in short chunks so a
+    change lands within a tick instead of after the current inter-sentence gap
+    finishes, and pausing holds without consuming log time so resuming picks the
+    pacing up where it left off.
+
+    Position is byte-based and therefore approximate — the line reader strips
+    line endings whose width it does not report — so the source pegs it to the
+    end at EOF rather than letting a progress bar stall at 99%.
 - Implementation: buffered file read, line-by-line; for replay, sleep between
   lines based on the delta between consecutive fix timestamps, capped so a log
   with a large gap (receiver switched off) doesn't stall the UI for real

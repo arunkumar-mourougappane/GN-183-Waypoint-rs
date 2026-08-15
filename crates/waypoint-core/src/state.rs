@@ -2,6 +2,7 @@
 //! that both frontends render.
 
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::time::{Duration, Instant};
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use nmea::sentences::{FixType as NmeaFixType, GnssType};
@@ -223,6 +224,53 @@ impl ConnectionStatus {
     }
 }
 
+/// How long a live source may go quiet before the UI calls it stale. A GNSS
+/// receiver emits at least once a second, so three seconds of silence means
+/// something is wrong rather than merely slow.
+pub const STALE_AFTER: Duration = Duration::from_secs(3);
+
+/// Liveness of the incoming stream: is data still arriving, and how fast.
+///
+/// Only meaningful for a live receiver. A finished recording is not "stale", it
+/// is simply over, which the connection status already says.
+#[derive(Debug, Clone, Default)]
+pub struct StreamHealth {
+    pub last_sentence_at: Option<Instant>,
+    /// Sentences per second over the most recent window.
+    pub sentences_per_sec: f32,
+    window_started_at: Option<Instant>,
+    window_count: u32,
+}
+
+impl StreamHealth {
+    /// Recompute the rate roughly once a second, which is both the cadence a
+    /// receiver reports at and often enough for a readout a human is watching.
+    fn record_sentence(&mut self) {
+        let now = Instant::now();
+        self.last_sentence_at = Some(now);
+
+        let started = *self.window_started_at.get_or_insert(now);
+        self.window_count += 1;
+
+        let elapsed = now.duration_since(started);
+        if elapsed >= Duration::from_secs(1) {
+            self.sentences_per_sec = self.window_count as f32 / elapsed.as_secs_f32();
+            self.window_started_at = Some(now);
+            self.window_count = 0;
+        }
+    }
+
+    pub fn since_last_sentence(&self) -> Option<Duration> {
+        self.last_sentence_at.map(|at| at.elapsed())
+    }
+
+    /// Whether the stream has gone quiet for long enough to be worth flagging.
+    pub fn is_stale(&self) -> bool {
+        self.since_last_sentence()
+            .is_some_and(|since| since > STALE_AFTER)
+    }
+}
+
 /// Stream health counters — this is a debugger, so how many sentences were
 /// rejected and why matters as much as the decoded values.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -293,6 +341,14 @@ pub struct GnssState {
     pub fix_time: Option<NaiveTime>,
     pub fix_date: Option<NaiveDate>,
 
+    /// Liveness of the incoming stream, for live sources.
+    pub health: StreamHealth,
+    /// When this session began, for time-to-first-fix.
+    pub session_started_at: Option<Instant>,
+    /// Wall-clock time from starting the source to the first valid fix — the
+    /// standard measure of how long a receiver took to acquire.
+    pub time_to_first_fix: Option<Duration>,
+
     pub track: VecDeque<TrackPoint>,
     pub history: VecDeque<MetricSample>,
     pub trip: TripStats,
@@ -309,6 +365,7 @@ impl GnssState {
     pub fn new(source_label: String) -> Self {
         Self {
             source_label,
+            session_started_at: Some(Instant::now()),
             ..Default::default()
         }
     }
@@ -345,6 +402,10 @@ impl GnssState {
 
     pub(crate) fn record_raw(&mut self, text: String, outcome: SentenceOutcome) {
         self.counters.total += 1;
+        // Counts every line off the wire, valid or not: a receiver spewing
+        // corrupt sentences is still alive, and that distinction matters when
+        // diagnosing a bad cable or the wrong baud rate.
+        self.health.record_sentence();
         match &outcome {
             SentenceOutcome::Decoded(kind) => {
                 self.counters.decoded += 1;
@@ -442,6 +503,15 @@ impl GnssState {
     pub(crate) fn begin_epoch(&mut self) {
         self.gsa_talkers_seen.clear();
         self.used_prns.clear();
+    }
+
+    /// Record how long acquisition took, the first time a valid fix arrives.
+    pub(crate) fn note_first_fix(&mut self) {
+        if self.time_to_first_fix.is_none()
+            && let Some(started) = self.session_started_at
+        {
+            self.time_to_first_fix = Some(started.elapsed());
+        }
     }
 
     /// Clear the track, plots and trip statistics without touching the live

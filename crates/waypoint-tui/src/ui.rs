@@ -12,6 +12,8 @@ use waypoint_core::{
     Constellation, FixMode, GnssState, KNOTS_TO_KMH, SentenceOutcome, hdop_rating,
 };
 
+use crate::Transport;
+
 /// What the lower panel shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BottomPanel {
@@ -28,9 +30,9 @@ impl BottomPanel {
     }
 }
 
-/// `replay_speed` is `Some` only while a paced file replay is running; the rate
-/// controls are meaningless for a live serial or TCP source.
-pub fn draw(frame: &mut Frame, state: &GnssState, bottom: BottomPanel, replay_speed: Option<f32>) {
+/// `transport` decides which affordances the dashboard offers: a live receiver
+/// gets liveness and acquisition readouts, a recording gets position and rate.
+pub fn draw(frame: &mut Frame, state: &GnssState, bottom: BottomPanel, transport: &Transport) {
     let [header, main, bottom_area, footer] = Layout::vertical([
         Constraint::Length(3),
         Constraint::Min(10),
@@ -39,15 +41,22 @@ pub fn draw(frame: &mut Frame, state: &GnssState, bottom: BottomPanel, replay_sp
     ])
     .areas(frame.area());
 
-    draw_header(frame, header, state, replay_speed);
+    draw_header(frame, header, state, transport);
 
     let [track_area, side] =
         Layout::horizontal([Constraint::Min(30), Constraint::Length(40)]).areas(main);
     draw_track(frame, track_area, state);
 
+    // The live panel carries one extra row (data rate and acquisition), so give
+    // it the space only when it has something to say.
+    let status_height = if matches!(transport, Transport::Live) {
+        14
+    } else {
+        12
+    };
     let [status_area, sats_area] =
-        Layout::vertical([Constraint::Length(12), Constraint::Min(5)]).areas(side);
-    draw_status(frame, status_area, state);
+        Layout::vertical([Constraint::Length(status_height), Constraint::Min(5)]).areas(side);
+    draw_status(frame, status_area, state, transport);
     draw_satellites(frame, sats_area, state);
 
     match bottom {
@@ -55,7 +64,7 @@ pub fn draw(frame: &mut Frame, state: &GnssState, bottom: BottomPanel, replay_sp
         BottomPanel::RawSentences => draw_raw(frame, bottom_area, state),
     }
 
-    draw_footer(frame, footer, replay_speed);
+    draw_footer(frame, footer, transport);
 }
 
 fn fix_style(mode: FixMode) -> Style {
@@ -81,7 +90,7 @@ fn constellation_color(constellation: Constellation) -> Color {
     }
 }
 
-fn draw_header(frame: &mut Frame, area: Rect, state: &GnssState, replay_speed: Option<f32>) {
+fn draw_header(frame: &mut Frame, area: Rect, state: &GnssState, transport: &Transport) {
     let counters = &state.counters;
     let source = if state.source_label.is_empty() {
         "no source".to_string()
@@ -114,11 +123,49 @@ fn draw_header(frame: &mut Frame, area: Rect, state: &GnssState, replay_speed: O
         )),
     ];
 
-    if let Some(speed) = replay_speed {
-        spans.push(Span::styled(
-            format!("   replay ×{speed}"),
-            Style::default().fg(Color::Magenta),
-        ));
+    match transport {
+        // A recording has a position and a rate; it cannot go stale.
+        Transport::Replay {
+            speed,
+            paused,
+            progress,
+        } => {
+            if *paused {
+                spans.push(Span::styled(
+                    "   ‖ PAUSED",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ));
+            }
+            spans.push(Span::styled(
+                format!("   replay ×{speed}"),
+                Style::default().fg(Color::Magenta),
+            ));
+            if let Some(fraction) = progress {
+                spans.push(Span::styled(
+                    format!("  {:.0}%", fraction * 100.0),
+                    Style::default().fg(Color::Magenta),
+                ));
+            }
+        }
+        // A receiver has no position to report, but it can fall silent.
+        Transport::Live => {
+            let health = &state.health;
+            if health.is_stale() {
+                let since = health.since_last_sentence().unwrap_or_default();
+                spans.push(Span::styled(
+                    format!("   NO DATA {:.0}s", since.as_secs_f32()),
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                ));
+            } else {
+                spans.push(Span::styled(
+                    format!("   {:.1} msg/s", health.sentences_per_sec),
+                    Style::default().fg(Color::Cyan),
+                ));
+            }
+        }
+        Transport::Instant | Transport::Idle => {}
     }
 
     frame.render_widget(
@@ -211,7 +258,7 @@ fn track_bounds(state: &GnssState, area: Rect) -> ([f64; 2], [f64; 2]) {
     )
 }
 
-fn draw_status(frame: &mut Frame, area: Rect, state: &GnssState) {
+fn draw_status(frame: &mut Frame, area: Rect, state: &GnssState, transport: &Transport) {
     let by_constellation = state.satellites_by_constellation();
     let counts: Vec<Span> = by_constellation
         .iter()
@@ -286,6 +333,22 @@ fn draw_status(frame: &mut Frame, area: Rect, state: &GnssState) {
         "Sats",
         &format!("{} used / {} in view", used, state.sats_in_view()),
     ));
+
+    // Acquisition only means something for a receiver that had to search for a
+    // fix; replaying a log that already contains one says nothing about it.
+    if matches!(transport, Transport::Live) {
+        lines.push(value_line(
+            "TTFF",
+            &state
+                .time_to_first_fix
+                .map(|ttff| format!("{:.1} s", ttff.as_secs_f32()))
+                .unwrap_or_else(|| "acquiring…".into()),
+        ));
+        lines.push(value_line(
+            "Data rate",
+            &format!("{:.1} sentences/s", state.health.sentences_per_sec),
+        ));
+    }
 
     // Per-constellation counts get their own line: colour-coded, and too wide to
     // share a row with the totals in a narrow panel.
@@ -546,11 +609,23 @@ fn draw_raw(frame: &mut Frame, area: Rect, state: &GnssState) {
     );
 }
 
-fn draw_footer(frame: &mut Frame, area: Rect, replay_speed: Option<f32>) {
-    let keys = if replay_speed.is_some() {
-        " q quit   r reset trip   n toggle raw/plots   -/+ replay speed   1 reset speed "
-    } else {
-        " q quit   r reset trip   n toggle raw/plots "
+fn draw_footer(frame: &mut Frame, area: Rect, transport: &Transport) {
+    // Only advertise keys that do something for the source in hand.
+    let keys = match transport {
+        Transport::Replay { paused, .. } => {
+            let play = if *paused {
+                "space resume"
+            } else {
+                "space pause"
+            };
+            format!(
+                " q quit   r reset trip   n toggle raw/plots   {play}   -/+ speed   1 real time   R restart "
+            )
+        }
+        Transport::Instant => " q quit   r reset trip   n toggle raw/plots   R reload ".to_string(),
+        Transport::Live | Transport::Idle => {
+            " q quit   r reset trip   n toggle raw/plots ".to_string()
+        }
     };
     frame.render_widget(
         Paragraph::new(keys).alignment(Alignment::Left).dark_gray(),
@@ -577,14 +652,14 @@ mod tests {
     }
 
     fn render(bottom: BottomPanel) -> String {
-        render_with_speed(bottom, None)
+        render_transport(bottom, &Transport::Instant)
     }
 
-    fn render_with_speed(bottom: BottomPanel, replay_speed: Option<f32>) -> String {
+    fn render_transport(bottom: BottomPanel, transport: &Transport) -> String {
         let state = sample_state();
         let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
         terminal
-            .draw(|frame| draw(frame, &state, bottom, replay_speed))
+            .draw(|frame| draw(frame, &state, bottom, transport))
             .unwrap();
         let buffer = terminal.backend().buffer();
         (0..buffer.area.height)
@@ -617,20 +692,53 @@ mod tests {
         assert!(out.contains("3D"));
     }
 
-    /// The rate controls only make sense for a replay, so they must appear for
-    /// one and stay hidden for a live source.
+    /// Transport controls belong to a recording, never to a receiver.
     #[test]
-    fn replay_rate_is_shown_only_while_replaying() {
-        let replaying = render_with_speed(BottomPanel::Plots, Some(8.0));
-        assert!(
-            replaying.contains("replay ×8"),
-            "missing rate in:\n{replaying}"
+    fn replay_shows_position_and_rate() {
+        let out = render_transport(
+            BottomPanel::Plots,
+            &Transport::Replay {
+                speed: 8.0,
+                paused: false,
+                progress: Some(0.42),
+            },
         );
-        assert!(replaying.contains("-/+ replay speed"));
 
-        let live = render_with_speed(BottomPanel::Plots, None);
-        assert!(!live.contains("replay ×"));
-        assert!(!live.contains("-/+ replay speed"));
+        assert!(out.contains("replay ×8"), "missing rate in:\n{out}");
+        assert!(out.contains("42%"), "missing progress in:\n{out}");
+        assert!(out.contains("space pause"));
+        assert!(out.contains("R restart"));
+        // Liveness readouts are meaningless for a recording.
+        assert!(!out.contains("msg/s"));
+        assert!(!out.contains("TTFF"));
+    }
+
+    #[test]
+    fn paused_replay_is_called_out() {
+        let out = render_transport(
+            BottomPanel::Plots,
+            &Transport::Replay {
+                speed: 1.0,
+                paused: true,
+                progress: Some(0.5),
+            },
+        );
+
+        assert!(out.contains("PAUSED"), "missing pause state in:\n{out}");
+        assert!(out.contains("space resume"));
+    }
+
+    /// A receiver gets liveness and acquisition instead, and none of the
+    /// transport affordances it could not honour.
+    #[test]
+    fn live_source_shows_liveness_not_transport() {
+        let out = render_transport(BottomPanel::Plots, &Transport::Live);
+
+        assert!(out.contains("TTFF"), "missing acquisition row in:\n{out}");
+        assert!(out.contains("Data rate"), "missing data rate in:\n{out}");
+        assert!(!out.contains("replay ×"));
+        assert!(!out.contains("space pause"));
+        assert!(!out.contains("R restart"));
     }
 
     #[test]

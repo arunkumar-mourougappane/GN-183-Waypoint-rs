@@ -6,7 +6,7 @@ use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::mpsc;
 
-use super::{Cancel, FileMode, ReplaySpeed, SourceEvent};
+use super::{Cancel, FileMode, ReplayControl, SourceEvent};
 use crate::state::ConnectionStatus;
 
 /// Cap on how long a single gap is reproduced. A log with a large gap (receiver
@@ -33,6 +33,14 @@ pub async fn run(path: PathBuf, mode: FileMode, tx: mpsc::Sender<SourceEvent>, c
         }
     };
 
+    // Length drives the progress readout. A log that cannot be measured simply
+    // reports no progress rather than failing the replay.
+    if let FileMode::Replay { control } = &mode {
+        let total = file.metadata().await.map(|meta| meta.len()).unwrap_or(0);
+        control.set_total_bytes(total);
+        control.rewind();
+    }
+
     let _ = tx
         .send(SourceEvent::Status(ConnectionStatus::Connected))
         .await;
@@ -56,22 +64,37 @@ pub async fn run(path: PathBuf, mode: FileMode, tx: mpsc::Sender<SourceEvent>, c
             }
         };
 
-        if let FileMode::Replay { speed } = &mode
-            && let Some(epoch_secs) = sentence_time_secs(&line)
-        {
-            if let Some(previous) = previous_epoch_secs {
-                // Guard against a log that wraps past midnight going negative.
-                let delta = epoch_secs - previous;
-                if delta > 0.0 {
-                    replay_sleep(delta, speed, &cancel).await;
-                }
+        if let FileMode::Replay { control } = &mode {
+            // Hold before emitting, so a pause freezes the dashboard on the
+            // sentence being examined rather than one further on.
+            wait_while_paused(control, &cancel).await;
+            if cancel.is_cancelled() {
+                break;
             }
-            previous_epoch_secs = Some(epoch_secs);
+
+            if let Some(epoch_secs) = sentence_time_secs(&line) {
+                if let Some(previous) = previous_epoch_secs {
+                    // Guard against a log that wraps past midnight going negative.
+                    let delta = epoch_secs - previous;
+                    if delta > 0.0 {
+                        replay_sleep(delta, control, &cancel).await;
+                    }
+                }
+                previous_epoch_secs = Some(epoch_secs);
+            }
+
+            // +1 for the line ending the reader stripped. Approximate, and only
+            // ever used to render a progress fraction.
+            control.advance_bytes(line.len() as u64 + 1);
         }
 
         if tx.send(SourceEvent::Line(line)).await.is_err() {
             return;
         }
+    }
+
+    if let FileMode::Replay { control } = &mode {
+        control.complete();
     }
 
     let _ = tx
@@ -84,24 +107,39 @@ pub async fn run(path: PathBuf, mode: FileMode, tx: mpsc::Sender<SourceEvent>, c
 /// The sleep is chunked rather than taken in one call so that changing the speed
 /// mid-replay takes effect within a tick instead of after the current gap
 /// finishes — at 0.1× a single gap can otherwise be ten seconds long.
-async fn replay_sleep(delta_secs: f64, speed: &ReplaySpeed, cancel: &Cancel) {
+async fn replay_sleep(delta_secs: f64, control: &ReplayControl, cancel: &Cancel) {
     let mut remaining = delta_secs;
 
     while remaining > 0.0 && !cancel.is_cancelled() {
-        let scaled = remaining / speed.get() as f64;
+        // Pausing mid-gap holds without consuming log time, so resuming picks up
+        // the pacing exactly where it left off.
+        if control.is_paused() {
+            tokio::time::sleep(REPLAY_SLEEP_CHUNK).await;
+            continue;
+        }
+
+        let speed = control.speed();
+        let scaled = remaining / speed as f64;
         let sleep = Duration::from_secs_f64(scaled).min(REPLAY_SLEEP_CHUNK);
         tokio::time::sleep(sleep).await;
 
         // Charge back the log-time actually consumed at the rate in force for
         // that chunk, so a speed change part-way through neither skips ahead nor
         // repeats time already waited out.
-        remaining -= sleep.as_secs_f64() * speed.get() as f64;
+        remaining -= sleep.as_secs_f64() * speed as f64;
 
         if scaled >= MAX_REPLAY_SLEEP.as_secs_f64() {
             // A gap this long is a receiver that was switched off, not pacing
             // worth reproducing in real time.
             break;
         }
+    }
+}
+
+/// Block while the replay is paused, giving up promptly on cancellation.
+async fn wait_while_paused(control: &ReplayControl, cancel: &Cancel) {
+    while control.is_paused() && !cancel.is_cancelled() {
+        tokio::time::sleep(REPLAY_SLEEP_CHUNK).await;
     }
 }
 
@@ -196,10 +234,10 @@ mod tests {
         let (tx, rx) = mpsc::channel(64);
 
         let started = std::time::Instant::now();
-        let speed = ReplaySpeed::new(20.0);
+        let control = ReplayControl::new(20.0);
         tokio::spawn(run(
             log.0.clone(),
-            FileMode::Replay { speed },
+            FileMode::Replay { control },
             tx,
             Cancel::new(),
         ));
@@ -242,12 +280,12 @@ mod tests {
         let log = TempLog::ten_seconds();
         let (tx, rx) = mpsc::channel(64);
 
-        let speed = ReplaySpeed::new(0.5);
+        let control = ReplayControl::new(0.5);
         let started = std::time::Instant::now();
         tokio::spawn(run(
             log.0.clone(),
             FileMode::Replay {
-                speed: speed.clone(),
+                control: control.clone(),
             },
             tx,
             Cancel::new(),
@@ -256,7 +294,7 @@ mod tests {
         // At 0.5x the log would take ~18 s; jump to the maximum shortly after
         // starting and it must finish almost immediately instead.
         tokio::time::sleep(Duration::from_millis(150)).await;
-        speed.set(ReplaySpeed::MAX);
+        control.set_speed(ReplayControl::MAX_SPEED);
 
         let lines = drain(rx).await;
         assert_eq!(lines, 10);
@@ -269,14 +307,72 @@ mod tests {
 
     #[test]
     fn replay_speed_is_clamped_to_a_usable_range() {
-        let speed = ReplaySpeed::new(1.0);
-        speed.set(0.0);
-        assert_eq!(speed.get(), ReplaySpeed::MIN);
-        speed.set(f32::INFINITY);
-        assert_eq!(speed.get(), ReplaySpeed::MAX);
-        speed.set(4.0);
-        speed.scale(0.5);
-        assert_eq!(speed.get(), 2.0);
+        let control = ReplayControl::new(1.0);
+        control.set_speed(0.0);
+        assert_eq!(control.speed(), ReplayControl::MIN_SPEED);
+        control.set_speed(f32::INFINITY);
+        assert_eq!(control.speed(), ReplayControl::MAX_SPEED);
+        control.set_speed(4.0);
+        control.scale_speed(0.5);
+        assert_eq!(control.speed(), 2.0);
+    }
+
+    /// Pausing must stop sentences reaching the dashboard, and resuming must
+    /// carry on rather than skipping the time spent paused.
+    #[tokio::test]
+    async fn pausing_holds_the_replay() {
+        let log = TempLog::ten_seconds();
+        let (tx, mut rx) = mpsc::channel(64);
+
+        let control = ReplayControl::new(50.0);
+        control.set_paused(true);
+        tokio::spawn(run(
+            log.0.clone(),
+            FileMode::Replay {
+                control: control.clone(),
+            },
+            tx,
+            Cancel::new(),
+        ));
+
+        // Paused from the outset: the status arrives, the sentences do not.
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        let mut lines = 0;
+        while let Ok(event) = rx.try_recv() {
+            if matches!(event, SourceEvent::Line(_)) {
+                lines += 1;
+            }
+        }
+        assert_eq!(lines, 0, "paused replay emitted sentences");
+
+        control.set_paused(false);
+        assert_eq!(drain(rx).await, 10, "replay did not resume");
+    }
+
+    #[tokio::test]
+    async fn replay_reports_progress_through_the_log() {
+        let log = TempLog::ten_seconds();
+        let (tx, rx) = mpsc::channel(64);
+
+        let control = ReplayControl::new(ReplayControl::MAX_SPEED);
+        assert_eq!(
+            control.progress(),
+            None,
+            "no progress before the file opens"
+        );
+
+        tokio::spawn(run(
+            log.0.clone(),
+            FileMode::Replay {
+                control: control.clone(),
+            },
+            tx,
+            Cancel::new(),
+        ));
+        drain(rx).await;
+
+        let progress = control.progress().expect("length known once opened");
+        assert_eq!(progress, 1.0, "finished replay must read as complete");
     }
 
     #[test]

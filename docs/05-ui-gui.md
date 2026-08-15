@@ -73,6 +73,18 @@ See [`07-trip-statistics.md`](07-trip-statistics.md) for the metrics; render as 
 simple label/value list (distance, elapsed, moving time, avg/max speed, elevation
 gain/loss) with a reset-trip action.
 
+## Transport and liveness
+
+The top bar adapts to what the source can do (see
+[`02-data-sources.md`](02-data-sources.md)):
+
+- **Replay**: play/pause, restart, ½×/2× rate stepping with the current
+  multiplier, and a progress bar showing position in the log.
+- **Live**: sentences-per-second, replaced by a "no data for Ns" warning once
+  the stream goes quiet, plus time-to-first-fix and data rate in the status
+  panel.
+- **Instant load**: neither — the log is parsed and done.
+
 ## Source control
 
 - A "Source…" panel for selecting source type (serial/TCP/file) and its

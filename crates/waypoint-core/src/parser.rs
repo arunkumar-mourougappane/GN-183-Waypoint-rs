@@ -225,6 +225,7 @@ impl Aggregator {
         let Some((lat, lon)) = state.position() else {
             return;
         };
+        state.note_first_fix();
 
         let point = TrackPoint {
             lat,

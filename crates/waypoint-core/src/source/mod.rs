@@ -9,7 +9,7 @@ pub mod tcp;
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 use tokio::sync::mpsc;
 
@@ -43,56 +43,147 @@ pub enum SourceEvent {
     Warning(String),
 }
 
-/// Live replay rate, shared between the frontend and the running file source so
-/// it can be changed mid-replay without restarting (which would discard the
-/// track accumulated so far).
-///
-/// Stored as the bit pattern of an `f32` because there is no `AtomicF32`.
-#[derive(Debug, Clone)]
-pub struct ReplaySpeed(Arc<AtomicU32>);
+/// What a running source can be asked to do. Frontends branch on this rather
+/// than on the transport, because the meaningful split is not serial-vs-TCP but
+/// live-vs-recorded: a receiver cannot be paused or rewound, and a finished
+/// recording cannot go stale or reconnect.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceControls {
+    /// A receiver producing data in real time. Can drop out and reconnect, can
+    /// go quiet, cannot be replayed or retimed.
+    Live,
+    /// A paced replay of a recording: pausable, retimable, restartable, and with
+    /// a known position within a known length.
+    Replay,
+    /// A log parsed as fast as it can be read. Finishes on its own; there is
+    /// nothing to control while it runs.
+    Instant,
+}
 
-impl ReplaySpeed {
-    /// Slowest and fastest usable multipliers. The lower bound keeps a sleep
-    /// from growing unbounded; the upper is past the point where a terminal or
-    /// a map can show anything meaningful anyway.
-    pub const MIN: f32 = 0.1;
-    pub const MAX: f32 = 200.0;
+impl SourceControls {
+    pub fn is_live(self) -> bool {
+        matches!(self, SourceControls::Live)
+    }
+
+    /// Whether transport controls (pause, rate, restart) apply.
+    pub fn is_replay(self) -> bool {
+        matches!(self, SourceControls::Replay)
+    }
+}
+
+/// Shared transport state for a file replay: rate, pause, and position.
+///
+/// Held jointly by the frontend and the running source so a replay can be
+/// retimed, paused and reported on in place. Restarting the source to do any of
+/// that would discard the accumulated track, which is the opposite of what
+/// someone studying a log wants.
+///
+/// The rate is stored as `f32` bit patterns because there is no `AtomicF32`.
+#[derive(Debug, Clone, Default)]
+pub struct ReplayControl(Arc<ReplayState>);
+
+#[derive(Debug)]
+struct ReplayState {
+    speed_bits: AtomicU32,
+    paused: AtomicBool,
+    bytes_read: AtomicU64,
+    total_bytes: AtomicU64,
+}
+
+impl Default for ReplayState {
+    fn default() -> Self {
+        Self {
+            speed_bits: AtomicU32::new(1.0f32.to_bits()),
+            paused: AtomicBool::new(false),
+            bytes_read: AtomicU64::new(0),
+            total_bytes: AtomicU64::new(0),
+        }
+    }
+}
+
+impl ReplayControl {
+    /// Slowest and fastest usable multipliers. The lower bound keeps a wait from
+    /// growing unbounded; the upper is past the point where a terminal or a map
+    /// can show anything meaningful anyway.
+    pub const MIN_SPEED: f32 = 0.1;
+    pub const MAX_SPEED: f32 = 200.0;
 
     pub fn new(speed: f32) -> Self {
-        Self(Arc::new(AtomicU32::new(
-            speed.clamp(Self::MIN, Self::MAX).to_bits(),
-        )))
+        let control = Self::default();
+        control.set_speed(speed);
+        control
     }
 
-    pub fn get(&self) -> f32 {
-        f32::from_bits(self.0.load(Ordering::Relaxed))
+    pub fn speed(&self) -> f32 {
+        f32::from_bits(self.0.speed_bits.load(Ordering::Relaxed))
     }
 
-    pub fn set(&self, speed: f32) {
-        self.0.store(
-            speed.clamp(Self::MIN, Self::MAX).to_bits(),
+    pub fn set_speed(&self, speed: f32) {
+        self.0.speed_bits.store(
+            speed.clamp(Self::MIN_SPEED, Self::MAX_SPEED).to_bits(),
             Ordering::Relaxed,
         );
     }
 
     /// Step the rate geometrically, which is how it reads to a user: half speed,
-    /// double speed, rather than ±1.
-    pub fn scale(&self, factor: f32) {
-        self.set(self.get() * factor);
+    /// double speed, rather than plus or minus one.
+    pub fn scale_speed(&self, factor: f32) {
+        self.set_speed(self.speed() * factor);
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.0.paused.load(Ordering::Relaxed)
+    }
+
+    pub fn set_paused(&self, paused: bool) {
+        self.0.paused.store(paused, Ordering::Relaxed);
+    }
+
+    pub fn toggle_paused(&self) {
+        self.set_paused(!self.is_paused());
+    }
+
+    /// Fraction of the log consumed, 0.0 to 1.0. `None` until the source has
+    /// opened the file and learned its length.
+    pub fn progress(&self) -> Option<f32> {
+        let total = self.0.total_bytes.load(Ordering::Relaxed);
+        (total > 0).then(|| {
+            let read = self.0.bytes_read.load(Ordering::Relaxed);
+            (read as f32 / total as f32).clamp(0.0, 1.0)
+        })
+    }
+
+    pub(crate) fn set_total_bytes(&self, total: u64) {
+        self.0.total_bytes.store(total, Ordering::Relaxed);
+    }
+
+    pub(crate) fn advance_bytes(&self, bytes: u64) {
+        self.0.bytes_read.fetch_add(bytes, Ordering::Relaxed);
+    }
+
+    /// Rewind the position counter. Called when a replay starts, so restarting a
+    /// source reuses the handle without inheriting a stale progress reading.
+    pub(crate) fn rewind(&self) {
+        self.0.bytes_read.store(0, Ordering::Relaxed);
+    }
+
+    /// Peg the position to the end of the log.
+    ///
+    /// Per-line accounting cannot be exact — the reader strips line endings
+    /// whose width it does not report, so a CRLF log accumulates a byte short
+    /// per line — and a progress bar that stops at 99% reads as a stall. The
+    /// source calls this when it reaches EOF.
+    pub(crate) fn complete(&self) {
+        let total = self.0.total_bytes.load(Ordering::Relaxed);
+        self.0.bytes_read.store(total, Ordering::Relaxed);
     }
 }
 
-impl Default for ReplaySpeed {
-    fn default() -> Self {
-        Self::new(1.0)
-    }
-}
-
-/// Compares current rates, so two handles set to the same speed are equal even
-/// when they are different allocations.
-impl PartialEq for ReplaySpeed {
+/// Compares observable transport state, so two handles in the same position and
+/// rate are equal even when they are different allocations.
+impl PartialEq for ReplayControl {
     fn eq(&self, other: &Self) -> bool {
-        self.get() == other.get()
+        self.speed() == other.speed() && self.is_paused() == other.is_paused()
     }
 }
 
@@ -101,8 +192,9 @@ pub enum FileMode {
     /// Parse the whole log as fast as possible.
     Instant,
     /// Pace sentences by their own timestamps, so the UI animates as it would
-    /// from a live receiver. The multiplier is live: 2.0 is twice real time.
-    Replay { speed: ReplaySpeed },
+    /// from a live receiver. The transport is live: rate, pause and position are
+    /// all readable and writable while it runs.
+    Replay { control: ReplayControl },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -113,6 +205,21 @@ pub enum SourceConfig {
 }
 
 impl SourceConfig {
+    /// What the frontends may offer for this source.
+    pub fn controls(&self) -> SourceControls {
+        match self {
+            SourceConfig::Serial { .. } | SourceConfig::Tcp { .. } => SourceControls::Live,
+            SourceConfig::File {
+                mode: FileMode::Replay { .. },
+                ..
+            } => SourceControls::Replay,
+            SourceConfig::File {
+                mode: FileMode::Instant,
+                ..
+            } => SourceControls::Instant,
+        }
+    }
+
     /// Human-readable description for the UI's source indicator.
     pub fn label(&self) -> String {
         match self {

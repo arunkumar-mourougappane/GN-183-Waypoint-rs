@@ -3,7 +3,8 @@
 use eframe::egui::{self, Color32, Grid, RichText, Ui};
 use egui_plot::{Legend, Line, Plot, PlotPoints};
 use waypoint_core::{
-    FixMode, GnssState, KNOTS_TO_KMH, KNOTS_TO_MPH, MetricSample, SentenceOutcome, hdop_rating,
+    FixMode, GnssState, KNOTS_TO_KMH, KNOTS_TO_MPH, MetricSample, SentenceOutcome, SourceControls,
+    hdop_rating,
 };
 
 use crate::skyview::constellation_color;
@@ -16,7 +17,7 @@ pub fn fix_color(mode: FixMode) -> Color32 {
     }
 }
 
-pub fn status_panel(ui: &mut Ui, state: &GnssState) {
+pub fn status_panel(ui: &mut Ui, state: &GnssState, controls: Option<SourceControls>) {
     ui.horizontal(|ui| {
         ui.label(
             RichText::new(state.fix_mode.label())
@@ -132,6 +133,25 @@ pub fn status_panel(ui: &mut Ui, state: &GnssState) {
                 "Date",
                 &optional(state.fix_date, |d| d.format("%Y-%m-%d").to_string()),
             );
+
+            // How long the receiver took to acquire is a property of this
+            // session's hardware; a log that already contains a fix says
+            // nothing about it.
+            if controls.is_some_and(SourceControls::is_live) {
+                row(
+                    ui,
+                    "Time to fix",
+                    &state
+                        .time_to_first_fix
+                        .map(|ttff| format!("{:.1} s", ttff.as_secs_f32()))
+                        .unwrap_or_else(|| "acquiring…".into()),
+                );
+                row(
+                    ui,
+                    "Data rate",
+                    &format!("{:.1} sentences/s", state.health.sentences_per_sec),
+                );
+            }
         });
 }
 

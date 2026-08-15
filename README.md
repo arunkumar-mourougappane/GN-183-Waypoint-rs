@@ -49,17 +49,30 @@ The GUI can also be started with no source and configured from its **Source…**
 | | Without `--replay` a log is parsed as fast as it can be read |
 | `--list-ports` | Print available serial ports and exit |
 
-The replay rate is live in both frontends — the GUI slider and the TUI's `-`/`+`
-keys retime a replay already in progress, without restarting it and losing the
-track accumulated so far.
+### Live sources versus recordings
+
+The two are not interchangeable, and the UI does not pretend they are. A
+recording can be paused, retimed and restarted, and has a position within a
+known length. A receiver has none of those, but it can fall silent, and how long
+it took to get a fix matters. Each frontend offers only what the running source
+can honour:
+
+| | Serial / TCP | File replay | File, instant |
+|---|---|---|---|
+| Pause, restart, rate | — | ✓ | — |
+| Position in log | — | ✓ | — |
+| Data rate, stale warning | ✓ | — | — |
+| Time to first fix | ✓ | — | — |
+
+Rate and pause apply to a replay already in progress, without restarting it and
+losing the track accumulated so far.
 
 ### TUI keys
 
-`q` quit · `r` reset trip · `n` toggle the plots/raw-sentence panel ·
-`-`/`+` halve/double the replay rate · `1` back to real time.
+`q` quit · `r` reset trip · `n` toggle the plots/raw-sentence panel.
 
-The rate controls and indicator only appear while a paced replay is running;
-they mean nothing for a live serial or TCP source.
+While replaying: `space` pause/resume · `-`/`+` halve/double the rate ·
+`1` back to real time · `R` restart from the beginning.
 
 The TUI writes no logs to the terminal (they would corrupt the display); set
 `WAYPOINT_LOG=/path/to/file` plus `RUST_LOG` to capture them.

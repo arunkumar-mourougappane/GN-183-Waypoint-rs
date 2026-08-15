@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 
 use clap::{Args, Parser};
-use waypoint_core::{FileMode, ReplaySpeed, SourceConfig};
+use waypoint_core::{FileMode, ReplayControl, SourceConfig};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -70,7 +70,7 @@ impl SourceArgs {
         if let Some(path) = &self.file {
             let mode = if options.replay {
                 FileMode::Replay {
-                    speed: ReplaySpeed::new(options.speed),
+                    control: ReplayControl::new(options.speed),
                 }
             } else {
                 FileMode::Instant

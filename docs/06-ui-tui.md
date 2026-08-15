@@ -68,6 +68,12 @@ already there.
 - `crossterm` event loop (via ratatui) for keybindings: `q`/`Esc` quit, `r`
   reset trip, `n` toggle the lower panel between the parameter sparklines and
   the raw sentence log.
+- Replay-only: `space` pause/resume, `-`/`+` halve/double the rate, `1` back to
+  real time, `R` restart from the beginning. The footer lists only the keys the
+  running source can honour, and the header carries the rate, position and
+  pause state.
+- Live-only: the header shows sentences per second, or a `NO DATA Ns` warning
+  once the receiver falls silent; the status panel adds time-to-first-fix.
 - The loop selects between `Engine::updates()` and a 50 ms tick, so it redraws
   when data arrives and still polls input promptly on a silent stream.
 - Because logs would corrupt the alternate screen, tracing output is only

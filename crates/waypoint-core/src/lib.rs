@@ -4,18 +4,19 @@
 //! and `ratatui` frontends drive it through [`Engine`].
 //!
 //! ```no_run
-//! use waypoint_core::{Engine, SourceConfig, FileMode, ReplaySpeed, TripConfig};
+//! use waypoint_core::{Engine, SourceConfig, FileMode, ReplayControl, TripConfig};
 //!
 //! # async fn example() {
 //! let engine = Engine::new(TripConfig::default());
 //! engine.set_source(SourceConfig::File {
 //!     path: "track.nmea".into(),
-//!     mode: FileMode::Replay { speed: ReplaySpeed::new(4.0) },
+//!     mode: FileMode::Replay { control: ReplayControl::new(4.0) },
 //! });
 //!
-//! // The rate is live: this speeds up the replay already in flight.
-//! if let Some(speed) = engine.replay_speed() {
-//!     speed.set(10.0);
+//! // The transport is live: this retimes and pauses the replay in flight.
+//! if let Some(control) = engine.replay_control() {
+//!     control.set_speed(10.0);
+//!     control.toggle_paused();
 //! }
 //!
 //! let mut updates = engine.updates();
@@ -35,11 +36,12 @@ pub mod trip;
 pub use engine::Engine;
 pub use parser::{Aggregator, ChecksumResult, verify_checksum};
 pub use source::{
-    COMMON_BAUD_RATES, FileMode, ReplaySpeed, SourceConfig, SourceEvent, available_serial_ports,
+    COMMON_BAUD_RATES, FileMode, ReplayControl, SourceConfig, SourceControls, SourceEvent,
+    available_serial_ports,
 };
 pub use state::{
     ConnectionStatus, Constellation, FixMode, FixQuality, GnssState, MetricSample, RawSentence,
-    SatelliteInfo, SentenceCounters, SentenceOutcome, TrackPoint,
+    STALE_AFTER, SatelliteInfo, SentenceCounters, SentenceOutcome, StreamHealth, TrackPoint,
 };
 pub use trip::{TripConfig, TripStats, haversine_distance_m};
 
