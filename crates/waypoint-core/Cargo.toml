@@ -1,0 +1,17 @@
+[package]
+name = "waypoint-core"
+description = "Transport-agnostic NMEA 0183 ingestion, parsing and GNSS state aggregation for Waypoint"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+nmea.workspace = true
+serialport.workspace = true
+geo.workspace = true
+chrono.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+thiserror.workspace = true

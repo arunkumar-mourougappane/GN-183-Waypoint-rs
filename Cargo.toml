@@ -1,6 +1,24 @@
-[package]
-name = "GN-183-Waypoint-rs"
+[workspace]
+resolver = "3"
+members = ["crates/waypoint-core"]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
+authors = ["Arunkumar Mourougappane"]
+repository = "https://github.com/amouroug/GN-183-Waypoint-rs"
 
-[dependencies]
+[workspace.dependencies]
+waypoint-core = { path = "crates/waypoint-core" }
+
+nmea = "0.8"
+serialport = "4.9"
+geo = "0.33"
+chrono = "0.4"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "net", "fs", "io-util", "macros"] }
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "2"
+anyhow = "1"
