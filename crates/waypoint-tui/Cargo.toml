@@ -1,0 +1,22 @@
+[package]
+name = "waypoint-tui"
+description = "Terminal dashboard for the Waypoint NMEA 0183 debugger"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "waypoint-tui"
+path = "src/main.rs"
+
+[dependencies]
+waypoint-core.workspace = true
+ratatui = "0.30"
+tokio.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

@@ -1,0 +1,26 @@
+[package]
+name = "waypoint-gui"
+description = "Map dashboard for the Waypoint NMEA 0183 debugger"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "waypoint-gui"
+path = "src/main.rs"
+
+[dependencies]
+waypoint-core.workspace = true
+eframe = "0.36"
+egui_plot = "0.37"
+walkers = "0.58"
+# Native file picker for choosing a log to open.
+rfd = "0.17"
+tokio.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

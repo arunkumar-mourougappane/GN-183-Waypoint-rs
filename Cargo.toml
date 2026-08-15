@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/waypoint-core"]
+members = ["crates/waypoint-core", "crates/waypoint-gui", "crates/waypoint-tui"]
 
 [workspace.package]
 version = "0.1.0"
