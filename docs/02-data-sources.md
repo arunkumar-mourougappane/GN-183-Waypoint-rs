@@ -59,13 +59,20 @@ to the rest of the app — the core parser/state layer only ever consumes
   - **Instant load**: parse the whole file, compute trip stats, show the full
     track immediately — useful for "what happened on this log" debugging.
   - **Replay**: pace sentence emission using the timestamps embedded in
-    RMC/GGA/ZDA (or, if the log has no reliable timestamps, a fixed rate e.g. 1
-    Hz), so the live map/dashboard animate the same way they would from a real
-    device. This is what makes the file source useful for testing the GUI/TUI
-    without hardware.
+    RMC/GGA/ZDA, so the live map/dashboard animate the same way they would from
+    a real device. This is what makes the file source useful for testing the
+    GUI/TUI without hardware.
+
+    The rate is a `ReplaySpeed` handle shared with the frontend rather than a
+    plain `f32`, so it can be changed while the replay runs. Restarting the
+    source to change speed would discard the accumulated track and trip
+    statistics, which is exactly what someone studying a log does not want.
+    Waits are taken in short chunks so a change lands within a tick instead of
+    after the current inter-sentence gap finishes.
 - Implementation: buffered file read, line-by-line; for replay, sleep between
-  lines based on delta between consecutive fix timestamps (clamped to a sane
-  min/max so a log with a large time gap doesn't stall the UI for real minutes).
+  lines based on the delta between consecutive fix timestamps, capped so a log
+  with a large gap (receiver switched off) doesn't stall the UI for real
+  minutes.
 - Malformed lines (partial writes, non-NMEA log noise) should be skipped with a
   logged warning, not treated as fatal — logs from real hardware are rarely
   perfectly clean.

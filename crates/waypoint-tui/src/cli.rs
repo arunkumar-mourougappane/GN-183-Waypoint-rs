@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 
 use clap::{Args, Parser};
-use waypoint_core::{FileMode, SourceConfig};
+use waypoint_core::{FileMode, ReplaySpeed, SourceConfig};
 
 #[derive(Debug, Parser)]
 #[command(name = "waypoint-tui", version, about = "Terminal NMEA 0183 debugger")]
@@ -66,7 +66,7 @@ impl SourceArgs {
         if let Some(path) = &self.file {
             let mode = if options.replay {
                 FileMode::Replay {
-                    speed: options.speed,
+                    speed: ReplaySpeed::new(options.speed),
                 }
             } else {
                 FileMode::Instant

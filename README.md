@@ -44,11 +44,20 @@ The GUI can also be started with no source and configured from its **Source…**
 | `--tcp <HOST:PORT>` | Read from a TCP endpoint, with reconnect backoff |
 | `--file <PATH>` | Read a recorded log |
 | `--replay [--speed X]` | Pace a log by its own timestamps instead of loading it at once |
+| | Without `--replay` a log is parsed as fast as it can be read |
 | `--list-ports` | Print available serial ports and exit |
+
+The replay rate is live in both frontends — the GUI slider and the TUI's `-`/`+`
+keys retime a replay already in progress, without restarting it and losing the
+track accumulated so far.
 
 ### TUI keys
 
-`q` quit · `r` reset trip · `n` toggle the plots/raw-sentence panel.
+`q` quit · `r` reset trip · `n` toggle the plots/raw-sentence panel ·
+`-`/`+` halve/double the replay rate · `1` back to real time.
+
+The rate controls and indicator only appear while a paced replay is running;
+they mean nothing for a live serial or TCP source.
 
 The TUI writes no logs to the terminal (they would corrupt the display); set
 `WAYPOINT_LOG=/path/to/file` plus `RUST_LOG` to capture them.

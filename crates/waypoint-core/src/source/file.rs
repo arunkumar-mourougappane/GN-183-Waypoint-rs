@@ -6,13 +6,15 @@ use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::mpsc;
 
-use super::{Cancel, FileMode, SourceEvent};
+use super::{Cancel, FileMode, ReplaySpeed, SourceEvent};
 use crate::state::ConnectionStatus;
 
-/// Clamp on replay sleeps. A log with a large gap (receiver powered off, say)
-/// must not stall the UI for real minutes, and a run of identical timestamps
-/// must not spin.
+/// Cap on how long a single gap is reproduced. A log with a large gap (receiver
+/// powered off, say) must not stall the UI for real minutes.
 const MAX_REPLAY_SLEEP: Duration = Duration::from_secs(2);
+/// Granularity of a replay wait, and so the worst-case lag before a speed change
+/// or a cancellation is noticed.
+const REPLAY_SLEEP_CHUNK: Duration = Duration::from_millis(100);
 
 pub async fn run(path: PathBuf, mode: FileMode, tx: mpsc::Sender<SourceEvent>, cancel: Cancel) {
     let _ = tx
@@ -54,16 +56,14 @@ pub async fn run(path: PathBuf, mode: FileMode, tx: mpsc::Sender<SourceEvent>, c
             }
         };
 
-        if let FileMode::Replay { speed } = mode
+        if let FileMode::Replay { speed } = &mode
             && let Some(epoch_secs) = sentence_time_secs(&line)
         {
             if let Some(previous) = previous_epoch_secs {
                 // Guard against a log that wraps past midnight going negative.
                 let delta = epoch_secs - previous;
                 if delta > 0.0 {
-                    let scaled = delta / speed.max(0.01) as f64;
-                    let sleep = Duration::from_secs_f64(scaled).min(MAX_REPLAY_SLEEP);
-                    tokio::time::sleep(sleep).await;
+                    replay_sleep(delta, speed, &cancel).await;
                 }
             }
             previous_epoch_secs = Some(epoch_secs);
@@ -77,6 +77,32 @@ pub async fn run(path: PathBuf, mode: FileMode, tx: mpsc::Sender<SourceEvent>, c
     let _ = tx
         .send(SourceEvent::Status(ConnectionStatus::Disconnected))
         .await;
+}
+
+/// Wait out one inter-sentence gap, re-reading the rate as it goes.
+///
+/// The sleep is chunked rather than taken in one call so that changing the speed
+/// mid-replay takes effect within a tick instead of after the current gap
+/// finishes — at 0.1× a single gap can otherwise be ten seconds long.
+async fn replay_sleep(delta_secs: f64, speed: &ReplaySpeed, cancel: &Cancel) {
+    let mut remaining = delta_secs;
+
+    while remaining > 0.0 && !cancel.is_cancelled() {
+        let scaled = remaining / speed.get() as f64;
+        let sleep = Duration::from_secs_f64(scaled).min(REPLAY_SLEEP_CHUNK);
+        tokio::time::sleep(sleep).await;
+
+        // Charge back the log-time actually consumed at the rate in force for
+        // that chunk, so a speed change part-way through neither skips ahead nor
+        // repeats time already waited out.
+        remaining -= sleep.as_secs_f64() * speed.get() as f64;
+
+        if scaled >= MAX_REPLAY_SLEEP.as_secs_f64() {
+            // A gap this long is a receiver that was switched off, not pacing
+            // worth reproducing in real time.
+            break;
+        }
+    }
 }
 
 /// Extract the UTC time field as seconds-since-midnight from the sentences that
@@ -102,6 +128,8 @@ fn sentence_time_secs(line: &str) -> Option<f64> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::AtomicU32;
+
     use super::*;
 
     #[test]
@@ -119,6 +147,130 @@ mod tests {
         )
         .unwrap();
         assert!((secs - (12.0 * 3600.0 + 35.0 * 60.0 + 19.5)).abs() < 1e-6);
+    }
+
+    /// A log file that deletes itself, so the timing tests need no fixtures and
+    /// no temp-directory dependency.
+    struct TempLog(PathBuf);
+
+    impl TempLog {
+        /// Ten seconds of receiver time, one GGA per second.
+        fn ten_seconds() -> Self {
+            static COUNTER: AtomicU32 = AtomicU32::new(0);
+            let id = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+            let mut path = std::env::temp_dir();
+            path.push(format!("waypoint-replay-{}-{id}.nmea", std::process::id()));
+
+            let lines: Vec<String> = (0..10)
+                .map(|i| {
+                    format!("$GPGGA,1200{i:02},4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47")
+                })
+                .collect();
+            std::fs::write(&path, lines.join("\r\n")).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for TempLog {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    async fn drain(mut rx: mpsc::Receiver<SourceEvent>) -> usize {
+        let mut lines = 0;
+        while let Some(event) = rx.recv().await {
+            if matches!(event, SourceEvent::Line(_)) {
+                lines += 1;
+            }
+        }
+        lines
+    }
+
+    /// Replay must actually take time proportional to the log, and the rate must
+    /// divide it — this is the difference between replay and instant load.
+    #[tokio::test]
+    async fn replay_rate_scales_elapsed_time() {
+        let log = TempLog::ten_seconds();
+        let (tx, rx) = mpsc::channel(64);
+
+        let started = std::time::Instant::now();
+        let speed = ReplaySpeed::new(20.0);
+        tokio::spawn(run(
+            log.0.clone(),
+            FileMode::Replay { speed },
+            tx,
+            Cancel::new(),
+        ));
+        let lines = drain(rx).await;
+        let elapsed = started.elapsed();
+
+        assert_eq!(lines, 10);
+        // 9 gaps of 1 s at 20x is ~450 ms; allow generous slack for CI timers,
+        // but it must be clearly slower than an instant load and clearly faster
+        // than real time.
+        assert!(
+            elapsed > Duration::from_millis(200) && elapsed < Duration::from_secs(3),
+            "replay took {elapsed:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn instant_mode_does_not_pace() {
+        let log = TempLog::ten_seconds();
+        let (tx, rx) = mpsc::channel(64);
+
+        let started = std::time::Instant::now();
+        tokio::spawn(run(log.0.clone(), FileMode::Instant, tx, Cancel::new()));
+        let lines = drain(rx).await;
+
+        assert_eq!(lines, 10);
+        assert!(started.elapsed() < Duration::from_millis(200));
+    }
+
+    /// The whole point of the shared handle: speeding up mid-replay must take
+    /// effect without restarting the source.
+    #[tokio::test]
+    async fn speed_change_applies_mid_replay() {
+        let log = TempLog::ten_seconds();
+        let (tx, rx) = mpsc::channel(64);
+
+        let speed = ReplaySpeed::new(0.5);
+        let started = std::time::Instant::now();
+        tokio::spawn(run(
+            log.0.clone(),
+            FileMode::Replay {
+                speed: speed.clone(),
+            },
+            tx,
+            Cancel::new(),
+        ));
+
+        // At 0.5x the log would take ~18 s; jump to the maximum shortly after
+        // starting and it must finish almost immediately instead.
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        speed.set(ReplaySpeed::MAX);
+
+        let lines = drain(rx).await;
+        assert_eq!(lines, 10);
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "speed change was not picked up: took {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn replay_speed_is_clamped_to_a_usable_range() {
+        let speed = ReplaySpeed::new(1.0);
+        speed.set(0.0);
+        assert_eq!(speed.get(), ReplaySpeed::MIN);
+        speed.set(f32::INFINITY);
+        assert_eq!(speed.get(), ReplaySpeed::MAX);
+        speed.set(4.0);
+        speed.scale(0.5);
+        assert_eq!(speed.get(), 2.0);
     }
 
     #[test]

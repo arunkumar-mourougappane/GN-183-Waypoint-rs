@@ -4,14 +4,19 @@
 //! and `ratatui` frontends drive it through [`Engine`].
 //!
 //! ```no_run
-//! use waypoint_core::{Engine, SourceConfig, FileMode, TripConfig};
+//! use waypoint_core::{Engine, SourceConfig, FileMode, ReplaySpeed, TripConfig};
 //!
 //! # async fn example() {
 //! let engine = Engine::new(TripConfig::default());
 //! engine.set_source(SourceConfig::File {
 //!     path: "track.nmea".into(),
-//!     mode: FileMode::Replay { speed: 4.0 },
+//!     mode: FileMode::Replay { speed: ReplaySpeed::new(4.0) },
 //! });
+//!
+//! // The rate is live: this speeds up the replay already in flight.
+//! if let Some(speed) = engine.replay_speed() {
+//!     speed.set(10.0);
+//! }
 //!
 //! let mut updates = engine.updates();
 //! while updates.changed().await.is_ok() {
@@ -29,7 +34,9 @@ pub mod trip;
 
 pub use engine::Engine;
 pub use parser::{Aggregator, ChecksumResult, verify_checksum};
-pub use source::{COMMON_BAUD_RATES, FileMode, SourceConfig, SourceEvent, available_serial_ports};
+pub use source::{
+    COMMON_BAUD_RATES, FileMode, ReplaySpeed, SourceConfig, SourceEvent, available_serial_ports,
+};
 pub use state::{
     ConnectionStatus, Constellation, FixMode, FixQuality, GnssState, MetricSample, RawSentence,
     SatelliteInfo, SentenceCounters, SentenceOutcome, TrackPoint,

@@ -28,7 +28,9 @@ impl BottomPanel {
     }
 }
 
-pub fn draw(frame: &mut Frame, state: &GnssState, bottom: BottomPanel) {
+/// `replay_speed` is `Some` only while a paced file replay is running; the rate
+/// controls are meaningless for a live serial or TCP source.
+pub fn draw(frame: &mut Frame, state: &GnssState, bottom: BottomPanel, replay_speed: Option<f32>) {
     let [header, main, bottom_area, footer] = Layout::vertical([
         Constraint::Length(3),
         Constraint::Min(10),
@@ -37,7 +39,7 @@ pub fn draw(frame: &mut Frame, state: &GnssState, bottom: BottomPanel) {
     ])
     .areas(frame.area());
 
-    draw_header(frame, header, state);
+    draw_header(frame, header, state, replay_speed);
 
     let [track_area, side] =
         Layout::horizontal([Constraint::Min(30), Constraint::Length(40)]).areas(main);
@@ -53,7 +55,7 @@ pub fn draw(frame: &mut Frame, state: &GnssState, bottom: BottomPanel) {
         BottomPanel::RawSentences => draw_raw(frame, bottom_area, state),
     }
 
-    draw_footer(frame, footer);
+    draw_footer(frame, footer, replay_speed);
 }
 
 fn fix_style(mode: FixMode) -> Style {
@@ -79,7 +81,7 @@ fn constellation_color(constellation: Constellation) -> Color {
     }
 }
 
-fn draw_header(frame: &mut Frame, area: Rect, state: &GnssState) {
+fn draw_header(frame: &mut Frame, area: Rect, state: &GnssState, replay_speed: Option<f32>) {
     let counters = &state.counters;
     let source = if state.source_label.is_empty() {
         "no source".to_string()
@@ -93,7 +95,7 @@ fn draw_header(frame: &mut Frame, area: Rect, state: &GnssState) {
         Color::Red
     };
 
-    let line = Line::from(vec![
+    let mut spans = vec![
         Span::styled(
             " WAYPOINT ",
             Style::default().fg(Color::Black).bg(Color::Cyan),
@@ -110,10 +112,17 @@ fn draw_header(frame: &mut Frame, area: Rect, state: &GnssState) {
             "sentences {}  ok {}  crc-bad {}  err {}",
             counters.total, counters.decoded, counters.checksum_failed, counters.parse_failed
         )),
-    ]);
+    ];
+
+    if let Some(speed) = replay_speed {
+        spans.push(Span::styled(
+            format!("   replay ×{speed}"),
+            Style::default().fg(Color::Magenta),
+        ));
+    }
 
     frame.render_widget(
-        Paragraph::new(line).block(Block::default().borders(Borders::ALL)),
+        Paragraph::new(Line::from(spans)).block(Block::default().borders(Borders::ALL)),
         area,
     );
 }
@@ -537,8 +546,12 @@ fn draw_raw(frame: &mut Frame, area: Rect, state: &GnssState) {
     );
 }
 
-fn draw_footer(frame: &mut Frame, area: Rect) {
-    let keys = " q quit   r reset trip   n toggle raw/plots ";
+fn draw_footer(frame: &mut Frame, area: Rect, replay_speed: Option<f32>) {
+    let keys = if replay_speed.is_some() {
+        " q quit   r reset trip   n toggle raw/plots   -/+ replay speed   1 reset speed "
+    } else {
+        " q quit   r reset trip   n toggle raw/plots "
+    };
     frame.render_widget(
         Paragraph::new(keys).alignment(Alignment::Left).dark_gray(),
         area,
@@ -564,9 +577,15 @@ mod tests {
     }
 
     fn render(bottom: BottomPanel) -> String {
+        render_with_speed(bottom, None)
+    }
+
+    fn render_with_speed(bottom: BottomPanel, replay_speed: Option<f32>) -> String {
         let state = sample_state();
         let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
-        terminal.draw(|frame| draw(frame, &state, bottom)).unwrap();
+        terminal
+            .draw(|frame| draw(frame, &state, bottom, replay_speed))
+            .unwrap();
         let buffer = terminal.backend().buffer();
         (0..buffer.area.height)
             .map(|y| {
@@ -596,6 +615,22 @@ mod tests {
         }
         // The sample log ends with a 3D fix from a healthy multi-constellation receiver.
         assert!(out.contains("3D"));
+    }
+
+    /// The rate controls only make sense for a replay, so they must appear for
+    /// one and stay hidden for a live source.
+    #[test]
+    fn replay_rate_is_shown_only_while_replaying() {
+        let replaying = render_with_speed(BottomPanel::Plots, Some(8.0));
+        assert!(
+            replaying.contains("replay ×8"),
+            "missing rate in:\n{replaying}"
+        );
+        assert!(replaying.contains("-/+ replay speed"));
+
+        let live = render_with_speed(BottomPanel::Plots, None);
+        assert!(!live.contains("replay ×"));
+        assert!(!live.contains("-/+ replay speed"));
     }
 
     #[test]

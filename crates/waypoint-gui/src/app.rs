@@ -7,7 +7,7 @@ use tokio::runtime::{Handle, Runtime};
 use walkers::sources::OpenStreetMap;
 use walkers::{HttpOptions, HttpTiles, Map, MapMemory};
 use waypoint_core::{
-    COMMON_BAUD_RATES, ConnectionStatus, Engine, FileMode, SourceConfig, TripConfig,
+    COMMON_BAUD_RATES, ConnectionStatus, Engine, FileMode, ReplaySpeed, SourceConfig, TripConfig,
     available_serial_ports,
 };
 
@@ -83,7 +83,9 @@ impl SourceForm {
             SourceKind::File => (!self.file_path.is_empty()).then(|| SourceConfig::File {
                 path: PathBuf::from(&self.file_path),
                 mode: if self.replay {
-                    FileMode::Replay { speed: self.speed }
+                    FileMode::Replay {
+                        speed: ReplaySpeed::new(self.speed),
+                    }
                 } else {
                     FileMode::Instant
                 },
@@ -110,7 +112,7 @@ impl SourceForm {
                     FileMode::Instant => self.replay = false,
                     FileMode::Replay { speed } => {
                         self.replay = true;
-                        self.speed = *speed;
+                        self.speed = speed.get();
                     }
                 }
             }
@@ -186,7 +188,11 @@ impl WaypointApp {
         }
     }
 
-    fn source_picker(form: &mut SourceForm, ui: &mut egui::Ui) -> PickerAction {
+    fn source_picker(
+        form: &mut SourceForm,
+        live_speed: Option<&ReplaySpeed>,
+        ui: &mut egui::Ui,
+    ) -> PickerAction {
         let mut action = PickerAction::None;
 
         ui.horizontal(|ui| {
@@ -249,12 +255,20 @@ impl WaypointApp {
                         .on_hover_text(&form.file_path);
                 });
                 ui.checkbox(&mut form.replay, "Replay in original timing");
-                ui.add_enabled(
-                    form.replay,
-                    egui::Slider::new(&mut form.speed, 0.25..=60.0)
-                        .logarithmic(true)
-                        .text("× speed"),
-                );
+                if ui
+                    .add_enabled(
+                        form.replay,
+                        egui::Slider::new(&mut form.speed, ReplaySpeed::MIN..=ReplaySpeed::MAX)
+                            .logarithmic(true)
+                            .text("× speed"),
+                    )
+                    .changed()
+                    && let Some(live) = live_speed
+                {
+                    // Apply to the replay already running, rather than waiting
+                    // for a reconnect that would discard the track.
+                    live.set(form.speed);
+                }
             }
         }
 
@@ -277,6 +291,7 @@ impl eframe::App for WaypointApp {
         // One read guard per frame; the ingest task never holds the write lock
         // across an await, so this cannot stall the UI.
         let state = self.engine.state();
+        let live_speed = self.engine.replay_speed();
         let mut picker_action = PickerAction::None;
 
         egui::Panel::top("top").show(ui, |ui| {
@@ -305,6 +320,16 @@ impl eframe::App for WaypointApp {
                         .color(panels::fix_color(state.fix_mode)),
                 );
 
+                if let Some(speed) = &live_speed {
+                    ui.separator();
+                    ui.label(
+                        RichText::new(format!("replay ×{:.2}", speed.get()))
+                            .size(12.0)
+                            .color(Color32::from_rgb(226, 112, 214)),
+                    )
+                    .on_hover_text("Replay rate — adjustable live from the Source panel");
+                }
+
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button("Source…").clicked() {
                         self.show_source_picker = !self.show_source_picker;
@@ -323,7 +348,7 @@ impl eframe::App for WaypointApp {
                 if self.show_source_picker {
                     ui.add_space(4.0);
                     ui.label(RichText::new("Source").strong());
-                    picker_action = Self::source_picker(&mut self.form, ui);
+                    picker_action = Self::source_picker(&mut self.form, live_speed.as_ref(), ui);
                     ui.separator();
                 }
 

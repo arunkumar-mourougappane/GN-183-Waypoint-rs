@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard};
 use tokio::sync::{mpsc, watch};
 
 use crate::parser::Aggregator;
-use crate::source::{Cancel, SourceConfig, SourceEvent, run_source};
+use crate::source::{Cancel, FileMode, ReplaySpeed, SourceConfig, SourceEvent, run_source};
 use crate::state::{ConnectionStatus, GnssState};
 use crate::trip::TripConfig;
 
@@ -55,6 +55,21 @@ impl Engine {
     /// one notification rather than a backlog.
     pub fn updates(&self) -> watch::Receiver<u64> {
         self.updates_rx.clone()
+    }
+
+    /// Live replay rate of the running source, when it is a paced file replay.
+    /// Frontends adjust this to change speed without restarting the source and
+    /// losing the accumulated track.
+    pub fn replay_speed(&self) -> Option<ReplaySpeed> {
+        self.active.lock().ok().and_then(|guard| {
+            guard.as_ref().and_then(|active| match &active.config {
+                SourceConfig::File {
+                    mode: FileMode::Replay { speed },
+                    ..
+                } => Some(speed.clone()),
+                _ => None,
+            })
+        })
     }
 
     pub fn current_source(&self) -> Option<SourceConfig> {
