@@ -15,6 +15,12 @@ const MAX_REPLAY_SLEEP: Duration = Duration::from_secs(2);
 /// Granularity of a replay wait, and so the worst-case lag before a speed change
 /// or a cancellation is noticed.
 const REPLAY_SLEEP_CHUNK: Duration = Duration::from_millis(100);
+/// Shortest wait worth taking. Anything below this is discarded rather than
+/// slept on, because `Duration::from_secs_f64` rounds a sub-nanosecond value to
+/// zero — and a zero-length sleep consumes no log time, so the loop below would
+/// never make progress. Real logs reach this state routinely: any gap that does
+/// not divide exactly by the replay rate leaves a floating-point residue.
+const MIN_MEANINGFUL_WAIT_SECS: f64 = 0.000_5;
 
 pub async fn run(path: PathBuf, mode: FileMode, tx: mpsc::Sender<SourceEvent>, cancel: Cancel) {
     let _ = tx
@@ -109,26 +115,38 @@ pub async fn run(path: PathBuf, mode: FileMode, tx: mpsc::Sender<SourceEvent>, c
 /// finishes — at 0.1× a single gap can otherwise be ten seconds long.
 async fn replay_sleep(delta_secs: f64, control: &ReplayControl, cancel: &Cancel) {
     let mut remaining = delta_secs;
+    let mut waited = Duration::ZERO;
 
     while remaining > 0.0 && !cancel.is_cancelled() {
         // Pausing mid-gap holds without consuming log time, so resuming picks up
-        // the pacing exactly where it left off.
+        // the pacing exactly where it left off. It must not count against the
+        // per-gap cap below, or a long pause would skip the rest of the gap.
         if control.is_paused() {
             tokio::time::sleep(REPLAY_SLEEP_CHUNK).await;
             continue;
         }
 
         let speed = control.speed();
-        let scaled = remaining / speed as f64;
-        let sleep = Duration::from_secs_f64(scaled).min(REPLAY_SLEEP_CHUNK);
+        let scaled_secs = remaining / speed as f64;
+
+        // Every iteration must either stop or consume real log time. Waiting on
+        // a duration that rounds to zero would do neither, and the loop would
+        // never end.
+        if !scaled_secs.is_finite() || scaled_secs < MIN_MEANINGFUL_WAIT_SECS {
+            break;
+        }
+
+        // Capped before the conversion, so an enormous gap cannot overflow it.
+        let sleep = Duration::from_secs_f64(scaled_secs.min(REPLAY_SLEEP_CHUNK.as_secs_f64()));
         tokio::time::sleep(sleep).await;
+        waited += sleep;
 
         // Charge back the log-time actually consumed at the rate in force for
         // that chunk, so a speed change part-way through neither skips ahead nor
         // repeats time already waited out.
         remaining -= sleep.as_secs_f64() * speed as f64;
 
-        if scaled >= MAX_REPLAY_SLEEP.as_secs_f64() {
+        if waited >= MAX_REPLAY_SLEEP {
             // A gap this long is a receiver that was switched off, not pacing
             // worth reproducing in real time.
             break;
@@ -192,18 +210,36 @@ mod tests {
     struct TempLog(PathBuf);
 
     impl TempLog {
+        /// Timestamps that do not tick on whole seconds, as a real receiver's
+        /// do not. The gaps here (0.97 s, 1.03 s) do not divide exactly by a
+        /// replay rate, which is what leaves a floating-point residue behind.
+        fn fractional_seconds() -> Self {
+            Self::write(&[
+                "000000.00",
+                "000000.97",
+                "000002.00",
+                "000003.00",
+                "000003.97",
+                "000005.00",
+            ])
+        }
+
         /// Ten seconds of receiver time, one GGA per second.
         fn ten_seconds() -> Self {
+            let times: Vec<String> = (0..10).map(|i| format!("1200{i:02}")).collect();
+            Self::write(&times.iter().map(String::as_str).collect::<Vec<_>>())
+        }
+
+        fn write(times: &[&str]) -> Self {
             static COUNTER: AtomicU32 = AtomicU32::new(0);
             let id = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
             let mut path = std::env::temp_dir();
             path.push(format!("waypoint-replay-{}-{id}.nmea", std::process::id()));
 
-            let lines: Vec<String> = (0..10)
-                .map(|i| {
-                    format!("$GPGGA,1200{i:02},4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47")
-                })
+            let lines: Vec<String> = times
+                .iter()
+                .map(|t| format!("$GPGGA,{t},4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47"))
                 .collect();
             std::fs::write(&path, lines.join("\r\n")).unwrap();
             Self(path)
@@ -303,6 +339,32 @@ mod tests {
             "speed change was not picked up: took {:?}",
             started.elapsed()
         );
+    }
+
+    /// A gap that does not divide exactly by the replay rate leaves a residue
+    /// small enough that the wait for it rounds to zero. Sleeping zero consumes
+    /// no log time, so a loop that only stops when the gap is used up never
+    /// stops at all — the replay freezes mid-log and never recovers.
+    ///
+    /// Whole-second logs hide this completely: their gaps divide exactly and
+    /// reach zero on the nose.
+    #[tokio::test]
+    async fn fractional_gaps_do_not_stall_the_replay() {
+        let log = TempLog::fractional_seconds();
+        let (tx, rx) = mpsc::channel(64);
+
+        let control = ReplayControl::new(20.0);
+        tokio::spawn(run(
+            log.0.clone(),
+            FileMode::Replay { control },
+            tx,
+            Cancel::new(),
+        ));
+
+        let lines = tokio::time::timeout(Duration::from_secs(5), drain(rx))
+            .await
+            .expect("replay stalled on a gap whose remaining wait rounds to zero");
+        assert_eq!(lines, 6, "every sentence should still be delivered");
     }
 
     #[test]
