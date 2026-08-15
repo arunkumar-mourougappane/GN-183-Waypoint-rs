@@ -79,7 +79,11 @@ The top bar adapts to what the source can do (see
 [`02-data-sources.md`](02-data-sources.md)):
 
 - **Replay**: play/pause, restart, ½×/2× rate stepping with the current
-  multiplier, and a progress bar showing position in the log.
+  multiplier, and a draggable scrub bar. A recording is random-access, so the
+  bar seeks rather than merely reporting: dragging it jumps the source, and it
+  works while paused, which is when scrubbing is most useful. While the handle
+  is held the slider shows where it has been dragged to, or playback would pull
+  it back from under the pointer.
 - **Live**: sentences-per-second, replaced by a "no data for Ns" warning once
   the stream goes quiet, plus time-to-first-fix and data rate in the status
   panel.

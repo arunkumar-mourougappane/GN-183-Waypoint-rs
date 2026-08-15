@@ -96,9 +96,18 @@ phrase it identically, while the plain `label()` stays technical for logs. See [
     finishes, and pausing holds without consuming log time so resuming picks the
     pacing up where it left off.
 
-    Position is byte-based and therefore approximate — the line reader strips
-    line endings whose width it does not report — so the source pegs it to the
-    end at EOF rather than letting a progress bar stall at 99%.
+    Position is byte-based, read through a seekable `BufReader` with `read_line`
+    so the byte count is measured rather than estimated. That also makes the
+    recording random-access: `ReplayControl::seek_to` asks the source to jump to
+    a fraction of the log, which is what backs the scrub bar in both frontends.
+
+    Seeking by byte lands mid-sentence, so the remainder of that line is
+    discarded — emitting half a sentence would be counted as a checksum failure
+    and read as corruption that is not there. After a jump the source runs on
+    unpaced until a GGA closes an epoch, so scrubbing while paused leaves the
+    dashboard on a complete fix rather than a fragment. Everything derived from
+    the old position — track, trip, satellites — is cleared, because it
+    describes a stretch of log that is no longer where we are.
 - Implementation: buffered file read, line-by-line; for replay, sleep between
   lines based on the delta between consecutive fix timestamps, capped so a log
   with a large gap (receiver switched off) doesn't stall the UI for real

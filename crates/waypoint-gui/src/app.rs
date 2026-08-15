@@ -133,6 +133,8 @@ pub struct WaypointApp {
     form: SourceForm,
     side: SidePanel,
     show_source_picker: bool,
+    /// Where the scrub handle is being held, while it is being held.
+    scrub: Option<f32>,
 }
 
 impl WaypointApp {
@@ -176,6 +178,7 @@ impl WaypointApp {
             form,
             side: SidePanel::Satellites,
             show_source_picker: initial_source.is_none(),
+            scrub: None,
         }
     }
 
@@ -333,7 +336,7 @@ impl eframe::App for WaypointApp {
                     Some(SourceControls::Replay) => {
                         if let Some(control) = &live_control {
                             ui.separator();
-                            transport_bar(ui, control, &mut restart);
+                            transport_bar(ui, control, &mut restart, &mut self.scrub);
                         }
                     }
                     // A receiver gets liveness: is data still arriving, how fast.
@@ -445,7 +448,12 @@ impl eframe::App for WaypointApp {
 
 /// Play/pause, restart, rate and position — the controls a finite recording can
 /// honour and a live receiver cannot.
-fn transport_bar(ui: &mut egui::Ui, control: &ReplayControl, restart: &mut bool) {
+fn transport_bar(
+    ui: &mut egui::Ui,
+    control: &ReplayControl,
+    restart: &mut bool,
+    scrub: &mut Option<f32>,
+) {
     let paused = control.is_paused();
     let (glyph, hint) = if paused {
         ("▶", "Resume")
@@ -483,13 +491,34 @@ fn transport_bar(ui: &mut egui::Ui, control: &ReplayControl, restart: &mut bool)
         control.scale_speed(2.0);
     }
 
-    if let Some(progress) = control.progress() {
-        ui.add(
-            egui::ProgressBar::new(progress)
-                .desired_width(140.0)
-                .text(format!("{:.0}%", progress * 100.0)),
+    if let Some(position) = control.progress() {
+        // While the handle is held, the slider shows where the user has dragged
+        // to; playback would otherwise drag it back under their finger.
+        let mut shown = scrub.unwrap_or(position);
+        ui.spacing_mut().slider_width = 180.0;
+        let response = ui.add(
+            egui::Slider::new(&mut shown, 0.0..=1.0)
+                .show_value(false)
+                .trailing_fill(true),
+        );
+
+        if response.drag_started() || response.changed() {
+            *scrub = Some(shown);
+        }
+        if response.changed() {
+            control.seek_to(shown);
+        }
+        // Hand control back to playback once released.
+        if response.drag_stopped() || (!response.dragged() && !response.has_focus()) {
+            *scrub = None;
+        }
+
+        ui.label(
+            RichText::new(format!("{:>3.0}%", shown * 100.0))
+                .size(12.0)
+                .monospace(),
         )
-        .on_hover_text("Position in the log");
+        .on_hover_text("Position in the log — drag to seek");
     }
 
     if paused {

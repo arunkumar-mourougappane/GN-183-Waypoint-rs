@@ -60,7 +60,7 @@ can honour:
 | | Serial / TCP | File replay | File, instant |
 |---|---|---|---|
 | Pause, restart, rate | — | ✓ | — |
-| Position in log | — | ✓ | — |
+| Seekable scrub bar | — | ✓ | — |
 | Data rate, stale warning | ✓ | — | — |
 | Time to first fix | ✓ | — | — |
 
@@ -71,8 +71,8 @@ losing the track accumulated so far.
 
 `q` quit · `r` reset trip · `n` toggle the plots/raw-sentence panel.
 
-While replaying: `space` pause/resume · `-`/`+` halve/double the rate ·
-`1` back to real time · `R` restart from the beginning.
+While replaying: `space` pause/resume · `←`/`→` scrub ±5% · `Home` jump to the
+start · `-`/`+` halve/double the rate · `1` back to real time · `R` restart.
 
 The TUI writes no logs to the terminal (they would corrupt the display); set
 `WAYPOINT_LOG=/path/to/file` plus `RUST_LOG` to capture them.

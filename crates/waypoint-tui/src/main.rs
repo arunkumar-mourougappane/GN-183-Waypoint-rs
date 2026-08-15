@@ -95,6 +95,16 @@ async fn run(engine: &Engine, terminal: &mut ratatui::DefaultTerminal) -> Result
                             control.set_speed(rate);
                         }
                     }
+                    Action::SeekBy(delta) => {
+                        if let Some(control) = engine.replay_control() {
+                            control.seek_by(delta);
+                        }
+                    }
+                    Action::SeekTo(fraction) => {
+                        if let Some(control) = engine.replay_control() {
+                            control.seek_to(fraction);
+                        }
+                    }
                     Action::Ignore => {}
                 }
             }
@@ -170,6 +180,9 @@ enum Action {
     /// Multiply the replay rate, so stepping reads as "half"/"double".
     ScaleReplaySpeed(f32),
     SetReplaySpeed(f32),
+    /// Scrub by a fraction of the log, the keyboard's answer to dragging.
+    SeekBy(f32),
+    SeekTo(f32),
     Ignore,
 }
 
@@ -185,6 +198,9 @@ impl Action {
             KeyCode::Char('+') | KeyCode::Char('=') => Action::ScaleReplaySpeed(2.0),
             KeyCode::Char('-') | KeyCode::Char('_') => Action::ScaleReplaySpeed(0.5),
             KeyCode::Char('1') => Action::SetReplaySpeed(1.0),
+            KeyCode::Left => Action::SeekBy(-0.05),
+            KeyCode::Right => Action::SeekBy(0.05),
+            KeyCode::Home => Action::SeekTo(0.0),
             _ => Action::Ignore,
         }
     }
@@ -262,6 +278,9 @@ mod tests {
     fn transport_keys_are_bound() {
         assert_eq!(Action::for_key(KeyCode::Char(' ')), Action::TogglePause);
         assert_eq!(Action::for_key(KeyCode::Char('R')), Action::Restart);
+        assert_eq!(Action::for_key(KeyCode::Left), Action::SeekBy(-0.05));
+        assert_eq!(Action::for_key(KeyCode::Right), Action::SeekBy(0.05));
+        assert_eq!(Action::for_key(KeyCode::Home), Action::SeekTo(0.0));
     }
 
     /// Transport state is derived from what the source can do, not from which

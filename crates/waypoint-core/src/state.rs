@@ -625,6 +625,17 @@ impl GnssState {
         }
     }
 
+    /// Drop everything that described the stretch of log we just jumped away
+    /// from. The stream counters survive: they describe the session's health,
+    /// not its position, and zeroing them would hide sentences already seen.
+    pub(crate) fn clear_after_seek(&mut self) {
+        self.reset_trip();
+        self.satellites.clear();
+        self.gsv_partial.clear();
+        self.used_prns.clear();
+        self.gsa_talkers_seen.clear();
+    }
+
     /// Clear the track, plots and trip statistics without touching the live
     /// connection or the current fix values.
     pub fn reset_trip(&mut self) {

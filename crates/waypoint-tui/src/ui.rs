@@ -33,8 +33,15 @@ impl BottomPanel {
 /// `transport` decides which affordances the dashboard offers: a live receiver
 /// gets liveness and acquisition readouts, a recording gets position and rate.
 pub fn draw(frame: &mut Frame, state: &GnssState, bottom: BottomPanel, transport: &Transport) {
+    // A replay gets a second header row for its transport, the way a player
+    // puts the scrub bar on its own line rather than crowding the status.
+    let header_height = if matches!(transport, Transport::Replay { .. }) {
+        4
+    } else {
+        3
+    };
     let [header, main, bottom_area, footer] = Layout::vertical([
-        Constraint::Length(3),
+        Constraint::Length(header_height),
         Constraint::Min(10),
         Constraint::Length(11),
         Constraint::Length(1),
@@ -65,6 +72,33 @@ pub fn draw(frame: &mut Frame, state: &GnssState, bottom: BottomPanel, transport
     }
 
     draw_footer(frame, footer, transport);
+}
+
+/// A media-player scrub bar drawn in text: played portion filled, a handle at
+/// the position, the rest as track. Terminals cannot offer a draggable widget,
+/// so the arrow keys move it and this shows where it is.
+fn scrub_bar<'a>(fraction: f32, width: usize) -> Vec<Span<'a>> {
+    let filled = ((fraction.clamp(0.0, 1.0) * width as f32).round() as usize).min(width);
+    let played = filled.saturating_sub(1);
+
+    vec![
+        Span::styled(
+            "─".repeat(played),
+            Style::default()
+                .fg(Color::Magenta)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            if filled > 0 { "●" } else { "" }.to_string(),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            "─".repeat(width - filled),
+            Style::default().fg(Color::DarkGray),
+        ),
+    ]
 }
 
 fn fix_style(mode: FixMode) -> Style {
@@ -98,8 +132,6 @@ fn draw_header(frame: &mut Frame, area: Rect, state: &GnssState, transport: &Tra
         state.source_label.clone()
     };
 
-    // A recording that reached its end is not a fault, so it must not read as
-    // one; only a live link going down is red.
     let controls = transport.controls();
     let connection_color = match state.connection.tone(controls) {
         StatusTone::Good => Color::Green,
@@ -108,7 +140,7 @@ fn draw_header(frame: &mut Frame, area: Rect, state: &GnssState, transport: &Tra
         StatusTone::Neutral => Color::DarkGray,
     };
 
-    let mut spans = vec![
+    let mut status = vec![
         Span::styled(
             " WAYPOINT ",
             Style::default().fg(Color::Black).bg(Color::Cyan),
@@ -121,59 +153,81 @@ fn draw_header(frame: &mut Frame, area: Rect, state: &GnssState, transport: &Tra
         Span::raw("   "),
         Span::styled(state.fix_mode.label(), fix_style(state.fix_mode)),
         Span::raw(format!(" / {}   ", state.fix_quality.label())),
-        Span::raw(format!(
-            "sentences {}  ok {}  crc-bad {}  err {}",
-            counters.total, counters.decoded, counters.checksum_failed, counters.parse_failed
-        )),
+        // Compact, so the status still fits an 80-column terminal.
+        Span::raw(format!("{} sent", counters.total)),
+        Span::styled(
+            format!("  {} ok", counters.decoded),
+            Style::default().fg(Color::Green),
+        ),
     ];
+    if counters.checksum_failed > 0 {
+        status.push(Span::styled(
+            format!("  {} crc", counters.checksum_failed),
+            Style::default().fg(Color::Red),
+        ));
+    }
+    if counters.parse_failed > 0 {
+        status.push(Span::styled(
+            format!("  {} err", counters.parse_failed),
+            Style::default().fg(Color::LightRed),
+        ));
+    }
 
-    match transport {
-        // A recording has a position and a rate; it cannot go stale.
-        Transport::Replay {
-            speed,
-            paused,
-            progress,
-        } => {
-            if *paused {
-                spans.push(Span::styled(
-                    "   ‖ PAUSED",
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                ));
-            }
-            spans.push(Span::styled(
-                format!("   replay ×{speed}"),
+    // A receiver has no position to report, but it can fall silent.
+    if let Transport::Live = transport {
+        let health = &state.health;
+        if health.is_stale() {
+            let since = health.since_last_sentence().unwrap_or_default();
+            status.push(Span::styled(
+                format!("   NO DATA {:.0}s", since.as_secs_f32()),
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            ));
+        } else {
+            status.push(Span::styled(
+                format!("   {:.1} msg/s", health.sentences_per_sec),
+                Style::default().fg(Color::Cyan),
+            ));
+        }
+    }
+
+    let mut lines = vec![Line::from(status)];
+
+    if let Transport::Replay {
+        speed,
+        paused,
+        progress,
+    } = transport
+    {
+        let mut bar = vec![
+            Span::styled(
+                if *paused { " ‖ " } else { " ▶ " },
+                Style::default()
+                    .fg(if *paused { Color::Yellow } else { Color::Green })
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(format!("×{speed:<5}"), Style::default().fg(Color::Magenta)),
+        ];
+        if let Some(fraction) = progress {
+            bar.push(Span::raw(" "));
+            bar.extend(scrub_bar(*fraction, 40));
+            bar.push(Span::styled(
+                format!(" {:>3.0}%", fraction * 100.0),
                 Style::default().fg(Color::Magenta),
             ));
-            if let Some(fraction) = progress {
-                spans.push(Span::styled(
-                    format!("  {:.0}%", fraction * 100.0),
-                    Style::default().fg(Color::Magenta),
-                ));
-            }
         }
-        // A receiver has no position to report, but it can fall silent.
-        Transport::Live => {
-            let health = &state.health;
-            if health.is_stale() {
-                let since = health.since_last_sentence().unwrap_or_default();
-                spans.push(Span::styled(
-                    format!("   NO DATA {:.0}s", since.as_secs_f32()),
-                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-                ));
-            } else {
-                spans.push(Span::styled(
-                    format!("   {:.1} msg/s", health.sentences_per_sec),
-                    Style::default().fg(Color::Cyan),
-                ));
-            }
+        if *paused {
+            bar.push(Span::styled(
+                "  PAUSED",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ));
         }
-        Transport::Instant | Transport::Idle => {}
+        lines.push(Line::from(bar));
     }
 
     frame.render_widget(
-        Paragraph::new(Line::from(spans)).block(Block::default().borders(Borders::ALL)),
+        Paragraph::new(lines).block(Block::default().borders(Borders::ALL)),
         area,
     );
 }
@@ -623,7 +677,7 @@ fn draw_footer(frame: &mut Frame, area: Rect, transport: &Transport) {
                 "space pause"
             };
             format!(
-                " q quit   r reset trip   n toggle raw/plots   {play}   -/+ speed   1 real time   R restart "
+                " q quit   r reset   n raw/plots   {play}   ←/→ seek   Home start   -/+ speed   1 real time   R restart "
             )
         }
         Transport::Instant => " q quit   r reset trip   n toggle raw/plots   R reload ".to_string(),
@@ -712,9 +766,12 @@ mod tests {
             },
         );
 
-        assert!(out.contains("replay ×8"), "missing rate in:\n{out}");
-        assert!(out.contains("42%"), "missing progress in:\n{out}");
+        assert!(out.contains("×8"), "missing rate in:\n{out}");
+        assert!(out.contains("42%"), "missing position in:\n{out}");
+        // The scrub bar's handle marks the position within the log.
+        assert!(out.contains('●'), "missing scrub handle in:\n{out}");
         assert!(out.contains("space pause"));
+        assert!(out.contains("←/→ seek"));
         assert!(out.contains("R restart"));
         // Liveness readouts are meaningless for a recording.
         assert!(!out.contains("msg/s"));
@@ -772,9 +829,35 @@ mod tests {
 
         assert!(out.contains("TTFF"), "missing acquisition row in:\n{out}");
         assert!(out.contains("Data rate"), "missing data rate in:\n{out}");
-        assert!(!out.contains("replay ×"));
+        assert!(!out.contains("scrub"));
+        assert!(!out.contains('●'), "no scrub bar for a live source");
         assert!(!out.contains("space pause"));
+        assert!(!out.contains("←/→ seek"));
         assert!(!out.contains("R restart"));
+    }
+
+    /// The bar's handle has to track the position, or it is decoration.
+    #[test]
+    fn scrub_bar_handle_follows_the_position() {
+        let at = |f: f32| {
+            scrub_bar(f, 20)
+                .iter()
+                .map(|s| s.content.to_string())
+                .collect::<Vec<_>>()
+        };
+
+        let start = at(0.0);
+        assert_eq!(start[0], "", "nothing played at the start");
+        assert_eq!(start[2].chars().count(), 20, "all track remaining");
+
+        let middle = at(0.5);
+        assert_eq!(middle[0].chars().count(), 9);
+        assert_eq!(middle[1], "●");
+        assert_eq!(middle[2].chars().count(), 10);
+
+        let end = at(1.0);
+        assert_eq!(end[0].chars().count(), 19);
+        assert_eq!(end[2], "", "no track left at the end");
     }
 
     #[test]

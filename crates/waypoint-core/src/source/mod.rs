@@ -9,7 +9,7 @@ pub mod tcp;
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, Ordering};
 
 use tokio::sync::mpsc;
 
@@ -41,6 +41,10 @@ pub enum SourceEvent {
     Status(ConnectionStatus),
     /// A recoverable problem worth surfacing without tearing the session down.
     Warning(String),
+    /// The source jumped to a different point in a recording. Everything derived
+    /// from the sentences before it — the track, the trip, the satellites in
+    /// view — describes a stretch of log that is no longer where we are.
+    Seeked,
 }
 
 /// What a running source can be asked to do. Frontends branch on this rather
@@ -82,12 +86,18 @@ impl SourceControls {
 #[derive(Debug, Clone, Default)]
 pub struct ReplayControl(Arc<ReplayState>);
 
+/// Sentinel for "no seek pending". Requests are stored as parts-per-million of
+/// the log so one atomic carries both the request and its absence.
+const NO_SEEK: i64 = -1;
+const SEEK_SCALE: f64 = 1_000_000.0;
+
 #[derive(Debug)]
 struct ReplayState {
     speed_bits: AtomicU32,
     paused: AtomicBool,
     bytes_read: AtomicU64,
     total_bytes: AtomicU64,
+    seek_request: AtomicI64,
 }
 
 impl Default for ReplayState {
@@ -97,6 +107,7 @@ impl Default for ReplayState {
             paused: AtomicBool::new(false),
             bytes_read: AtomicU64::new(0),
             total_bytes: AtomicU64::new(0),
+            seek_request: AtomicI64::new(NO_SEEK),
         }
     }
 }
@@ -153,18 +164,50 @@ impl ReplayControl {
         })
     }
 
+    /// Ask the running replay to jump to a fraction of the log, as dragging a
+    /// media player's scrub bar does. Takes effect at the next sentence.
+    pub fn seek_to(&self, fraction: f32) {
+        let ppm = (fraction.clamp(0.0, 1.0) as f64 * SEEK_SCALE) as i64;
+        self.0.seek_request.store(ppm, Ordering::Relaxed);
+    }
+
+    /// Move by a fraction of the log relative to where it is now, for keyboard
+    /// nudging. Negative rewinds.
+    pub fn seek_by(&self, delta: f32) {
+        let from = self.progress().unwrap_or(0.0);
+        self.seek_to(from + delta);
+    }
+
+    /// Whether a seek is waiting to be acted on, without claiming it.
+    pub(crate) fn seek_pending(&self) -> bool {
+        self.0.seek_request.load(Ordering::Relaxed) != NO_SEEK
+    }
+
+    /// Claim a pending seek, if any. Clearing it here means a request is acted
+    /// on once, however many frames it took the user to let go of the slider.
+    pub(crate) fn take_seek(&self) -> Option<f64> {
+        match self.0.seek_request.swap(NO_SEEK, Ordering::Relaxed) {
+            NO_SEEK => None,
+            ppm => Some((ppm as f64 / SEEK_SCALE).clamp(0.0, 1.0)),
+        }
+    }
+
     pub(crate) fn set_total_bytes(&self, total: u64) {
         self.0.total_bytes.store(total, Ordering::Relaxed);
     }
 
-    pub(crate) fn advance_bytes(&self, bytes: u64) {
-        self.0.bytes_read.fetch_add(bytes, Ordering::Relaxed);
+    /// Absolute position, so a seek reports where it landed rather than adding
+    /// to a count that no longer means anything.
+    pub(crate) fn set_position(&self, bytes: u64) {
+        self.0.bytes_read.store(bytes, Ordering::Relaxed);
     }
 
     /// Rewind the position counter. Called when a replay starts, so restarting a
-    /// source reuses the handle without inheriting a stale progress reading.
+    /// source reuses the handle without inheriting a stale progress reading or a
+    /// seek left over from the previous run.
     pub(crate) fn rewind(&self) {
         self.0.bytes_read.store(0, Ordering::Relaxed);
+        self.0.seek_request.store(NO_SEEK, Ordering::Relaxed);
     }
 
     /// Peg the position to the end of the log.

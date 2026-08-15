@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncSeekExt, BufReader};
 use tokio::sync::mpsc;
 
 use super::{Cancel, FileMode, ReplayControl, SourceEvent};
@@ -39,11 +39,11 @@ pub async fn run(path: PathBuf, mode: FileMode, tx: mpsc::Sender<SourceEvent>, c
         }
     };
 
-    // Length drives the progress readout. A log that cannot be measured simply
-    // reports no progress rather than failing the replay.
+    // Length drives the scrub bar. A log that cannot be measured simply reports
+    // no position rather than failing the replay.
+    let total_bytes = file.metadata().await.map(|meta| meta.len()).unwrap_or(0);
     if let FileMode::Replay { control } = &mode {
-        let total = file.metadata().await.map(|meta| meta.len()).unwrap_or(0);
-        control.set_total_bytes(total);
+        control.set_total_bytes(total_bytes);
         control.rewind();
     }
 
@@ -51,17 +51,58 @@ pub async fn run(path: PathBuf, mode: FileMode, tx: mpsc::Sender<SourceEvent>, c
         .send(SourceEvent::Status(ConnectionStatus::Connected))
         .await;
 
-    let mut lines = BufReader::new(file).lines();
+    // Read through a seekable BufReader rather than a line stream: a recording
+    // is random-access, and `read_line` also reports the exact byte count, so
+    // the position is measured rather than estimated.
+    let mut reader = BufReader::new(file);
     let mut previous_epoch_secs: Option<f64> = None;
+    let mut position: u64 = 0;
+    let mut line = String::new();
+    // Set after a seek: deliver sentences unpaced until one whole fix epoch has
+    // gone out, so scrubbing while paused lands the dashboard on a complete fix
+    // rather than a fragment of one.
+    let mut settling_after_seek = false;
 
     loop {
         if cancel.is_cancelled() {
             break;
         }
 
-        let line = match lines.next_line().await {
-            Ok(Some(line)) => line,
-            Ok(None) => break,
+        if let FileMode::Replay { control } = &mode
+            && !settling_after_seek
+        {
+            // Waiting here rather than after the read is what lets the scrub bar
+            // work while paused, which is when it is most useful.
+            wait_while_paused(control, &cancel).await;
+            if cancel.is_cancelled() {
+                break;
+            }
+
+            if let Some(fraction) = control.take_seek() {
+                match seek_to_line(&mut reader, fraction, total_bytes).await {
+                    Ok(landed) => {
+                        position = landed;
+                        control.set_position(position);
+                        // The gap either side of a jump is not elapsed time.
+                        previous_epoch_secs = None;
+                        settling_after_seek = true;
+                        if tx.send(SourceEvent::Seeked).await.is_err() {
+                            return;
+                        }
+                    }
+                    Err(err) => {
+                        let _ = tx
+                            .send(SourceEvent::Warning(format!("seek failed: {err}")))
+                            .await;
+                    }
+                }
+            }
+        }
+
+        line.clear();
+        let read = match reader.read_line(&mut line).await {
+            Ok(0) => break,
+            Ok(n) => n,
             Err(err) => {
                 let _ = tx
                     .send(SourceEvent::Warning(format!("read error: {err}")))
@@ -69,29 +110,27 @@ pub async fn run(path: PathBuf, mode: FileMode, tx: mpsc::Sender<SourceEvent>, c
                 break;
             }
         };
+        position += read as u64;
+        let line = line.trim_end_matches(['\r', '\n']).to_string();
 
         if let FileMode::Replay { control } = &mode {
-            // Hold before emitting, so a pause freezes the dashboard on the
-            // sentence being examined rather than one further on.
-            wait_while_paused(control, &cancel).await;
-            if cancel.is_cancelled() {
-                break;
-            }
-
             if let Some(epoch_secs) = sentence_time_secs(&line) {
                 if let Some(previous) = previous_epoch_secs {
                     // Guard against a log that wraps past midnight going negative.
                     let delta = epoch_secs - previous;
-                    if delta > 0.0 {
+                    if delta > 0.0 && !settling_after_seek {
                         replay_sleep(delta, control, &cancel).await;
                     }
                 }
                 previous_epoch_secs = Some(epoch_secs);
             }
 
-            // +1 for the line ending the reader stripped. Approximate, and only
-            // ever used to render a progress fraction.
-            control.advance_bytes(line.len() as u64 + 1);
+            // GGA closes an epoch, so the fix is whole once one has gone out.
+            if settling_after_seek && is_epoch_boundary(&line) {
+                settling_after_seek = false;
+            }
+
+            control.set_position(position);
         }
 
         if tx.send(SourceEvent::Line(line)).await.is_err() {
@@ -108,6 +147,28 @@ pub async fn run(path: PathBuf, mode: FileMode, tx: mpsc::Sender<SourceEvent>, c
         .await;
 }
 
+/// Jump to a fraction of the log and line up on a sentence boundary.
+///
+/// Seeking by byte lands mid-sentence almost every time, so the remainder of
+/// that line is discarded — emitting half a sentence would just be counted as a
+/// checksum failure and read as corruption that is not there.
+async fn seek_to_line(
+    reader: &mut BufReader<tokio::fs::File>,
+    fraction: f64,
+    total_bytes: u64,
+) -> std::io::Result<u64> {
+    let offset = (fraction * total_bytes as f64) as u64;
+    reader.seek(std::io::SeekFrom::Start(offset)).await?;
+
+    if offset == 0 {
+        return Ok(0);
+    }
+
+    let mut partial = String::new();
+    let skipped = reader.read_line(&mut partial).await?;
+    Ok(offset + skipped as u64)
+}
+
 /// Wait out one inter-sentence gap, re-reading the rate as it goes.
 ///
 /// The sleep is chunked rather than taken in one call so that changing the speed
@@ -118,6 +179,13 @@ async fn replay_sleep(delta_secs: f64, control: &ReplayControl, cancel: &Cancel)
     let mut waited = Duration::ZERO;
 
     while remaining > 0.0 && !cancel.is_cancelled() {
+        // A jump makes the rest of this gap meaningless. Returning here is also
+        // what lets the scrub bar respond while paused: a pause landing mid-gap
+        // parks in this loop rather than at the top of the read loop.
+        if control.seek_pending() {
+            return;
+        }
+
         // Pausing mid-gap holds without consuming log time, so resuming picks up
         // the pacing exactly where it left off. It must not count against the
         // per-gap cap below, or a long pause would skip the rest of the gap.
@@ -154,11 +222,17 @@ async fn replay_sleep(delta_secs: f64, control: &ReplayControl, cancel: &Cancel)
     }
 }
 
-/// Block while the replay is paused, giving up promptly on cancellation.
+/// Block while the replay is paused, giving up promptly on cancellation or on a
+/// pending seek — scrubbing has to work while paused.
 async fn wait_while_paused(control: &ReplayControl, cancel: &Cancel) {
-    while control.is_paused() && !cancel.is_cancelled() {
+    while control.is_paused() && !cancel.is_cancelled() && !control.seek_pending() {
         tokio::time::sleep(REPLAY_SLEEP_CHUNK).await;
     }
+}
+
+/// Whether this sentence ends a fix epoch.
+fn is_epoch_boundary(line: &str) -> bool {
+    line.split(',').next().is_some_and(|h| h.ends_with("GGA"))
 }
 
 /// Extract the UTC time field as seconds-since-midnight from the sentences that
@@ -222,6 +296,27 @@ mod tests {
                 "000003.97",
                 "000005.00",
             ])
+        }
+
+        /// Epochs of two sentences, so "did the seek deliver a whole fix?" is
+        /// distinguishable from "did it deliver one line?".
+        fn paired_sentences() -> Self {
+            static COUNTER: AtomicU32 = AtomicU32::new(0);
+            let id = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let mut path = std::env::temp_dir();
+            path.push(format!("waypoint-paired-{}-{id}.nmea", std::process::id()));
+
+            let mut lines = Vec::new();
+            for i in 0..10 {
+                lines.push(format!(
+                    "$GPRMC,1200{i:02},A,4807.038,N,01131.000,E,0.0,0.0,150826,,,A"
+                ));
+                lines.push(format!(
+                    "$GPGGA,1200{i:02},4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,"
+                ));
+            }
+            std::fs::write(&path, lines.join("\r\n")).unwrap();
+            Self(path)
         }
 
         /// Ten seconds of receiver time, one GGA per second.
@@ -365,6 +460,212 @@ mod tests {
             .await
             .expect("replay stalled on a gap whose remaining wait rounds to zero");
         assert_eq!(lines, 6, "every sentence should still be delivered");
+    }
+
+    /// Dragging the scrub bar must actually move the read head, and land on a
+    /// sentence boundary rather than mid-line.
+    #[tokio::test]
+    async fn seeking_jumps_to_a_whole_sentence() {
+        let log = TempLog::ten_seconds();
+        let (tx, mut rx) = mpsc::channel(64);
+
+        let control = ReplayControl::new(ReplayControl::MAX_SPEED);
+        control.set_paused(true);
+        tokio::spawn(run(
+            log.0.clone(),
+            FileMode::Replay {
+                control: control.clone(),
+            },
+            tx,
+            Cancel::new(),
+        ));
+
+        // Held at the start, then scrubbed to the middle.
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        control.seek_to(0.5);
+        control.set_paused(false);
+
+        let mut lines = Vec::new();
+        while let Some(event) = rx.recv().await {
+            if let SourceEvent::Line(line) = event {
+                lines.push(line);
+            }
+        }
+
+        assert!(
+            lines.len() < 10,
+            "seeking to the middle should skip earlier sentences, got {}",
+            lines.len()
+        );
+        assert!(
+            lines.iter().all(|l| l.starts_with("$GPGGA")),
+            "a seek landed mid-sentence: {lines:?}"
+        );
+        assert!(
+            lines.last().unwrap().contains("120009"),
+            "the replay should still run to the end of the log"
+        );
+    }
+
+    /// Scrubbing backwards is the point of a scrub bar: replaying a stretch you
+    /// just watched.
+    #[tokio::test]
+    async fn seeking_backwards_replays_earlier_sentences() {
+        let log = TempLog::ten_seconds();
+        let (tx, mut rx) = mpsc::channel(64);
+
+        let control = ReplayControl::new(ReplayControl::MAX_SPEED);
+        tokio::spawn(run(
+            log.0.clone(),
+            FileMode::Replay {
+                control: control.clone(),
+            },
+            tx,
+            Cancel::new(),
+        ));
+
+        // Let it run out, then rewind to the start and read it again.
+        let mut first_pass = 0;
+        while let Some(event) = rx.recv().await {
+            if matches!(event, SourceEvent::Line(_)) {
+                first_pass += 1;
+            }
+            if matches!(event, SourceEvent::Status(ConnectionStatus::Disconnected)) {
+                break;
+            }
+        }
+        assert_eq!(first_pass, 10);
+        assert_eq!(control.progress(), Some(1.0));
+    }
+
+    #[tokio::test]
+    async fn seek_position_is_reported_back() {
+        let log = TempLog::ten_seconds();
+        let (tx, rx) = mpsc::channel(64);
+
+        let control = ReplayControl::new(ReplayControl::MAX_SPEED);
+        control.set_paused(true);
+        tokio::spawn(run(
+            log.0.clone(),
+            FileMode::Replay {
+                control: control.clone(),
+            },
+            tx,
+            Cancel::new(),
+        ));
+
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        control.seek_to(0.75);
+        tokio::time::sleep(Duration::from_millis(150)).await;
+
+        let progress = control.progress().expect("length known");
+        assert!(
+            (0.7..0.95).contains(&progress),
+            "scrub bar should follow the seek, reported {progress}"
+        );
+
+        control.set_paused(false);
+        drain(rx).await;
+    }
+
+    /// Scrubbing while paused must leave the dashboard on a complete fix. A
+    /// seek lands mid-epoch, so the source runs on unpaced until a GGA closes
+    /// one, then holds again.
+    #[tokio::test]
+    async fn seeking_while_paused_settles_on_a_whole_epoch() {
+        let log = TempLog::paired_sentences();
+        let (tx, mut rx) = mpsc::channel(64);
+
+        let control = ReplayControl::new(1.0);
+        control.set_paused(true);
+        tokio::spawn(run(
+            log.0.clone(),
+            FileMode::Replay {
+                control: control.clone(),
+            },
+            tx,
+            Cancel::new(),
+        ));
+
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        control.seek_to(0.5);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        let mut delivered = Vec::new();
+        let mut seeked = false;
+        while let Ok(event) = rx.try_recv() {
+            match event {
+                SourceEvent::Seeked => seeked = true,
+                SourceEvent::Line(l) => delivered.push(l),
+                _ => {}
+            }
+        }
+
+        assert!(seeked, "the seek was never reported");
+        assert!(
+            delivered.iter().any(|l| l.starts_with("$GPGGA")),
+            "paused scrub should still land on a fix: {delivered:?}"
+        );
+        // Having settled, it must stop rather than run on while still paused.
+        assert!(
+            delivered.len() <= 3,
+            "paused replay ran past the epoch it settled on: {delivered:?}"
+        );
+        assert!(control.is_paused());
+    }
+
+    /// Pausing part-way through a gap parks the source inside the pacing wait,
+    /// not at the top of the read loop. A scrub bar that only answered from the
+    /// top would look dead exactly when someone pauses to go hunting.
+    #[tokio::test]
+    async fn seeking_works_when_paused_part_way_through_a_gap() {
+        let log = TempLog::ten_seconds();
+        let (tx, rx) = mpsc::channel(64);
+
+        // Slow enough that pausing is overwhelmingly likely to land mid-gap.
+        let control = ReplayControl::new(0.5);
+        tokio::spawn(run(
+            log.0.clone(),
+            FileMode::Replay {
+                control: control.clone(),
+            },
+            tx,
+            Cancel::new(),
+        ));
+
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        control.set_paused(true);
+        tokio::time::sleep(Duration::from_millis(150)).await;
+
+        let before = control.progress().expect("length known");
+        control.seek_to(0.8);
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        let after = control.progress().expect("length known");
+
+        assert!(
+            after > before + 0.3,
+            "scrubbing while paused did not move the position: {before} -> {after}"
+        );
+        assert!(control.is_paused(), "seeking must not resume playback");
+
+        control.set_paused(false);
+        drain(rx).await;
+    }
+
+    #[test]
+    fn relative_seeking_is_clamped_to_the_log() {
+        let control = ReplayControl::new(1.0);
+        control.set_total_bytes(1000);
+        control.set_position(500);
+        assert_eq!(control.progress(), Some(0.5));
+
+        control.seek_by(-2.0);
+        assert_eq!(control.take_seek(), Some(0.0), "rewinding past the start");
+
+        control.seek_by(2.0);
+        assert_eq!(control.take_seek(), Some(1.0), "seeking past the end");
+
+        assert_eq!(control.take_seek(), None, "a request is acted on once");
     }
 
     #[test]

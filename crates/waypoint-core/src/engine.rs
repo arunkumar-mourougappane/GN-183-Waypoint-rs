@@ -175,6 +175,10 @@ async fn ingest(
                     tracing::info!(status = %status.label(), "source status");
                     state.connection = status;
                 }
+                SourceEvent::Seeked => {
+                    tracing::info!("source seeked; clearing derived state");
+                    state.clear_after_seek();
+                }
                 SourceEvent::Warning(message) => {
                     tracing::warn!(%message, "source warning");
                     if !state.connection.is_healthy() {

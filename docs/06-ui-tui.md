@@ -68,10 +68,14 @@ already there.
 - `crossterm` event loop (via ratatui) for keybindings: `q`/`Esc` quit, `r`
   reset trip, `n` toggle the lower panel between the parameter sparklines and
   the raw sentence log.
-- Replay-only: `space` pause/resume, `-`/`+` halve/double the rate, `1` back to
-  real time, `R` restart from the beginning. The footer lists only the keys the
-  running source can honour, and the header carries the rate, position and
-  pause state.
+- Replay-only: `space` pause/resume, `←`/`→` scrub back and forward by 5% of the
+  log, `Home` jump to the start, `-`/`+` halve/double the rate, `1` back to real
+  time, `R` restart. The footer lists only the keys the running source can
+  honour.
+- A replay gets a second header row for its transport, the way a player puts the
+  scrub bar on its own line: play state, rate, a text scrub bar with a handle at
+  the current position, and the percentage. A terminal cannot offer a draggable
+  widget, so the arrow keys move the handle.
 - Live-only: the header shows sentences per second, or a `NO DATA Ns` warning
   once the receiver falls silent; the status panel adds time-to-first-fix.
 - The loop selects between `Engine::updates()` and a 50 ms tick, so it redraws
