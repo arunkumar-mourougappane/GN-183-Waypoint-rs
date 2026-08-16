@@ -1969,7 +1969,7 @@ dependencies = [
 
 [[package]]
 name = "gn183-waypoint-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "nmea",
@@ -1981,7 +1981,7 @@ dependencies = [
 
 [[package]]
 name = "gn183-waypoint-gui"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1998,7 +1998,7 @@ dependencies = [
 
 [[package]]
 name = "gn183-waypoint-tui"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "chrono",

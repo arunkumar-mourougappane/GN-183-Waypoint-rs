@@ -43,7 +43,8 @@ cargo install gn183-waypoint-tui
 [dependencies](docs/04-crate-selection.md) ·
 [GUI](docs/05-ui-gui.md) · [TUI](docs/06-ui-tui.md) ·
 [trip statistics](docs/07-trip-statistics.md) ·
-[roadmap](docs/08-roadmap.md) · [testing](docs/09-testing.md)
+[roadmap](docs/08-roadmap.md) · [testing](docs/09-testing.md) ·
+[release notes](docs/release/)
 
 ## Running
 
