@@ -70,6 +70,10 @@ async fn main() -> Result<()> {
     let mut terminal = ratatui::init();
     let result = run(&engine, &basemap, &mut terminal).await;
     ratatui::restore();
+
+    // Quitting must not cost the capture. The writer is a task, and returning
+    // from main tears the runtime down without waiting for it.
+    engine.stop_recording().await;
     result
 }
 
@@ -129,7 +133,7 @@ async fn run(
                     }
                     Action::ToggleRecording => {
                         if engine.recording().is_some() {
-                            engine.stop_recording();
+                            engine.stop_recording().await;
                         } else if engine.can_record() {
                             // Nobody wants to name a file mid-incident, so one
                             // is named after the moment it started.

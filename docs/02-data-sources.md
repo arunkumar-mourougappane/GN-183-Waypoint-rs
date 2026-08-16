@@ -58,8 +58,11 @@ at a desk as often as it takes.
   behind, sentences are counted as dropped rather than stalling a dashboard that
   has a live receiver to keep up with — and the drop count is shown, because a
   recording with a hole in it should say so.
-- Output is flushed about once a second, so a crash costs a second of capture
-  rather than everything since the last full buffer.
+- Output is flushed about once a second, and **again on the way out**: quitting
+  awaits the writer rather than dropping it. The writer is a task, and a runtime
+  torn down when `main` returns does not wait for tasks, so a fire-and-forget
+  stop loses whatever is still buffered — for a capture shorter than the flush
+  interval, that is all of it. A killed process still costs up to a second.
 
 A round-trip test asserts a capture reparses to the same counters as the session
 it came from, damaged sentences included.

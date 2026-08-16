@@ -316,6 +316,17 @@ impl WaypointApp {
     }
 }
 
+impl Drop for WaypointApp {
+    fn drop(&mut self) {
+        // Closing the window must not cost the capture: the writer is a task,
+        // and the runtime is about to go away without waiting for it.
+        if self.engine.recording().is_some() {
+            let _guard = self.handle.enter();
+            self.handle.block_on(self.engine.stop_recording());
+        }
+    }
+}
+
 impl eframe::App for WaypointApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         // One read guard per frame; the ingest task never holds the write lock
@@ -473,7 +484,10 @@ impl eframe::App for WaypointApp {
                     tracing::warn!(%err, "could not start recording");
                 }
             }
-            RecordAction::Stop => self.engine.stop_recording(),
+            RecordAction::Stop => {
+                let _guard = self.handle.enter();
+                self.handle.block_on(self.engine.stop_recording());
+            }
             RecordAction::None => {}
         }
         match picker_action {

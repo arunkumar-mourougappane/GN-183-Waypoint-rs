@@ -163,12 +163,20 @@ impl Engine {
         Ok(())
     }
 
-    /// Close the capture. The file is flushed as the recorder is dropped.
-    pub fn stop_recording(&self) {
-        self.recorder
+    /// Close the capture, waiting for buffered output to reach the disk.
+    ///
+    /// Awaited rather than fire-and-forget: the writer is a task, and a runtime
+    /// shutting down does not wait for tasks, so returning early loses whatever
+    /// has not been flushed.
+    pub async fn stop_recording(&self) {
+        let recorder = self
+            .recorder
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .take();
+        if let Some(recorder) = recorder {
+            recorder.finish().await;
+        }
         self.notify();
     }
 

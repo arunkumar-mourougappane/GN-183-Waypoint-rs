@@ -57,12 +57,18 @@ impl RecordingStatus {
     }
 }
 
-/// Handle to a running capture. Dropping it closes the file.
+/// Handle to a running capture.
+///
+/// Dropping it closes the file, but dropping alone is not enough at shutdown:
+/// the writer runs as a task, and a runtime torn down when `main` returns does
+/// not wait for it. Use [`Recorder::finish`] to be sure the capture reached the
+/// disk — see the test for what is otherwise lost.
 #[derive(Debug)]
 pub struct Recorder {
     tx: mpsc::Sender<String>,
     counters: Arc<Counters>,
     path: PathBuf,
+    writer: tokio::task::JoinHandle<()>,
 }
 
 impl Recorder {
@@ -74,9 +80,25 @@ impl Recorder {
 
         let (tx, rx) = mpsc::channel(QUEUE_DEPTH);
         let counters = Arc::new(Counters::default());
-        tokio::spawn(write_loop(file, rx, Arc::clone(&counters)));
+        let writer = tokio::spawn(write_loop(file, rx, Arc::clone(&counters)));
 
-        Ok(Self { tx, counters, path })
+        Ok(Self {
+            tx,
+            counters,
+            path,
+            writer,
+        })
+    }
+
+    /// Close the capture and wait for everything buffered to reach the disk.
+    ///
+    /// The alternative — dropping the handle and hoping — loses whatever has not
+    /// been flushed, which for a capture shorter than the flush interval is all
+    /// of it.
+    pub async fn finish(self) {
+        let Self { tx, writer, .. } = self;
+        drop(tx); // ends the write loop
+        let _ = writer.await;
     }
 
     /// Offer a sentence to the capture. Never blocks: if the writer has fallen
@@ -203,6 +225,30 @@ mod tests {
         assert!(
             std::fs::read_to_string(&path.0).unwrap().contains("*00"),
             "a checksum failure must be recorded, not filtered"
+        );
+    }
+
+    /// A capture shorter than the flush interval is entirely in the buffer.
+    /// Finishing has to drain it, or a brief recording produces an empty file —
+    /// which is exactly what happened before `finish` existed.
+    #[tokio::test]
+    async fn finishing_flushes_a_capture_shorter_than_the_flush_interval() {
+        assert!(
+            FLUSH_INTERVAL >= Duration::from_millis(500),
+            "this test is only meaningful while the interval is long"
+        );
+
+        let path = TempPath::new("shortsession");
+        let recorder = Recorder::start(&path.0).await.unwrap();
+        recorder.write("$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47");
+
+        // Well inside the first flush interval: nothing has reached the disk.
+        recorder.finish().await;
+
+        let written = std::fs::read_to_string(&path.0).unwrap();
+        assert!(
+            written.contains("$GPGGA,123519"),
+            "a short capture must still reach the disk, got {written:?}"
         );
     }
 
