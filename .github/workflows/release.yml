@@ -111,7 +111,7 @@ jobs:
           tag="${{ github.event.inputs.tag || github.ref_name }}"
           gh release create "$tag" \
             --draft \
-            --title "GN-183 Waypoint $tag" \
+            --title "$tag" \
             --notes-file RELEASE_NOTES.md \
             dist/* \
             || gh release upload "$tag" dist/* --clobber
