@@ -131,17 +131,3 @@ packages that the other platforms ship with their SDKs — `libudev-dev` for
 
 Requires **Rust 1.88 or newer** — let-chains are used throughout, and they
 stabilised there in the 2024 edition.
-
-## Releasing
-
-Pushing a `v*.*.*` tag builds both binaries for Linux, macOS and Windows and
-attaches them to a **draft** GitHub release, with
-[`RELEASE_NOTES.md`](RELEASE_NOTES.md) as the body. It is left as a draft
-deliberately: a release is outward-facing, so it gets a look before anyone can
-download it.
-
-```sh
-git tag -a v0.1.0 -m "v0.1.0" && git push origin v0.1.0
-```
-
-`workflow_dispatch` rebuilds an existing tag without moving it.
