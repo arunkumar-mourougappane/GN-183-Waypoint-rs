@@ -76,8 +76,11 @@ divide exactly by any replay rate.
   which only maps to log time if the sentence rate is uniform; real timestamps
   would need a pre-scan for the log's first and last.
 - Ground-truth parser tests. The fixture is generated here, so it proves the
-  parser handles real *shapes*, not that it produces correct *coordinates* —
-  that needs a recording published with its decoded track.
+  parser handles real *shapes*, not that it produces correct *coordinates*.
+  [tab5-gps-monitor](https://github.com/arunkumar-mourougappane/tab5-gps-monitor)
+  writes raw NMEA and its own decoded track side by side on SD, which is exactly
+  the pairing needed — given a recording whose route is not sensitive to
+  publish. See [`09-testing.md`](09-testing.md).
 
 ## Explicitly deferred
 

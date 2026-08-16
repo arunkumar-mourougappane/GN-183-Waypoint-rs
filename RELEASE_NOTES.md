@@ -15,7 +15,9 @@ tiles; `waypoint-tui` draws it in braille over a vector-tile basemap of roads an
 water. Both render the same state and report the same figures.
 
 **Sources.** Serial (with reconnect and a baud-rate warning when the stream has
-no line breaks), TCP (with backoff), and log files.
+no line breaks), TCP (with backoff), and log files — the three ways
+[tab5-gps-monitor](https://github.com/arunkumar-mourougappane/tab5-gps-monitor)
+emits NMEA, which is the hardware this was written for.
 
 **Live and recorded are treated differently**, because they are different. A
 recording gets a transport — pause, rate, restart, and a scrub bar that seeks
@@ -60,7 +62,10 @@ Worth reading before trusting it with something important.
 
 - **Serial and TCP have not been exercised against real hardware.** The code
   paths compile, are unit-tested, and handle reconnection, but every end-to-end
-  run so far has been from a file. This is the most likely place for a surprise.
+  run so far has been from a file. This is the most likely place for a surprise,
+  and [tab5-gps-monitor](https://github.com/arunkumar-mourougappane/tab5-gps-monitor)
+  is the device to try first: UART at 115200, or TCP 10110 over its `Tab5-GPS`
+  access point.
 - **Correctness is checked against a generated fixture**, which proves the
   parser handles real receiver *shapes* — fractional timestamps, multi-talker
   GSA, untracked satellites, damaged sentences — but not that it produces

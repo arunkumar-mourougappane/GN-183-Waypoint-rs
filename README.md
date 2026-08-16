@@ -10,6 +10,8 @@ GN-183 Waypoint is a high-precision telemetry and NMEA 0183 debugging suite buil
 
 Engineered for speed and memory safety, it allows developers to visually plot geodetic coordinates on a live tracking map while simultaneously monitoring critical array parameters like HDOP, satellite lock geometry, speed, altitude, and 2D/3D fix states.
 
+It was built to work with [tab5-gps-monitor](https://github.com/arunkumar-mourougappane/tab5-gps-monitor) — an M5Stack Tab5 (ESP32-P4) driving an AT6668 GPS/BDS unit — which is why the three source types are the three ways that device emits NMEA. See [Companion hardware](#companion-hardware).
+
 ## Layout
 
 ```
@@ -65,6 +67,38 @@ The GUI can also be started with no source and configured from its **Source…**
 | `--instant` | Parse a log as fast as it can be read, skipping to the finished track. No transport, since there is nothing left to control |
 | `--list-ports` | Print available serial ports and exit |
 | `--no-map` | TUI only: skip the basemap and make no network requests |
+
+### Companion hardware
+
+[tab5-gps-monitor](https://github.com/arunkumar-mourougappane/tab5-gps-monitor)
+runs on an M5Stack Tab5 (ESP32-P4) with an M5Stack GPS/BDS unit (AT6668) on
+Port.A. It emits NMEA three ways, and Waypoint reads all three:
+
+| The Tab5 does this | Waypoint reads it with |
+|---|---|
+| Streams NMEA 0183 over UART at 115200 baud | `--serial <port> --baud 115200` |
+| Serves the sentence stream over its `Tab5-GPS` Wi-Fi AP on TCP port 10110 | `--tcp <tab5-address>:10110` |
+| Writes raw NMEA and decoded track points to SD | `--file gps_0001.nmea` |
+
+```sh
+# Over USB
+cargo run -p waypoint-tui -- --serial /dev/tty.usbserial-0001 --baud 115200
+
+# Over its Wi-Fi AP — join `Tab5-GPS` first; the device's address on that
+# network is not fixed by this project, so check the Tab5's own display.
+cargo run -p waypoint-gui -- --tcp 192.168.4.1:10110
+
+# From a log pulled off the SD card
+cargo run -p waypoint-gui -- --file gps_0001.nmea
+```
+
+TCP port 10110 is the conventional port for NMEA over IP, which is why it is the
+default in the GUI's source picker.
+
+That pairing is also where the parser's harder cases came from: the AT6668
+reports GPS, GLONASS, Galileo, BeiDou and QZSS, emits one `GNGSA` per
+constellation under a single talker, and timestamps that drift off the whole
+second — all of which broke something here before they were handled.
 
 ### Live sources versus recordings
 

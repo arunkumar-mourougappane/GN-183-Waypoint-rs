@@ -24,6 +24,22 @@ to the rest of the app — the core parser/state layer only ever consumes
 `SourceEvent`s. This is the seam that keeps `waypoint-core` transport-agnostic (see
 [`03-architecture.md`](03-architecture.md)).
 
+## The device this was built for
+
+[tab5-gps-monitor](https://github.com/arunkumar-mourougappane/tab5-gps-monitor)
+(M5Stack Tab5 / ESP32-P4, AT6668 GPS/BDS unit) is the reference source, and its
+three outputs are the three transports here:
+
+| Transport | On the Tab5 |
+|---|---|
+| Serial | UART at 115200 baud — worth knowing, since a wrong baud rate is the most common serial mistake and produces framing garbage with no line breaks |
+| TCP | Served to up to four clients over the `Tab5-GPS` Wi-Fi AP on port 10110, the conventional port for NMEA over IP |
+| File | Raw NMEA written to SD, alongside a decoded track in CSV |
+
+Several of the parser's more awkward cases come straight from that receiver: five
+`GNGSA` sentences per epoch under one talker, a constellation reporting nothing
+in view, and timestamps that drift off the whole second.
+
 ## Live versus recorded
 
 Uniform *ingestion* does not mean a uniform UI. The meaningful split is not

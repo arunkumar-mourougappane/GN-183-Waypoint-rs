@@ -39,8 +39,17 @@ untracked satellites with no SNR, a dead-reckoned fix, damaged sentences.
 The corollary: **a fixture generated here cannot prove correctness**, only that
 real shapes are handled. It agrees with our reading of the spec by construction.
 Checking decoded positions against a track published with a real recording is
-the only thing that catches a coordinate conversion that is subtly wrong — see
-the open item in [`08-roadmap.md`](08-roadmap.md).
+the only thing that catches a coordinate conversion that is subtly wrong.
+
+There is a ready-made source for that:
+[tab5-gps-monitor](https://github.com/arunkumar-mourougappane/tab5-gps-monitor)
+writes **both** raw NMEA and its own decoded track points to SD, as
+`gps_NNNN.nmea` and `track_NNNN.csv`. Comparing the two independently verifies
+the degrees-minutes conversion and hemisphere handling. A trial run against one
+such pair matched to 1e-6 degrees — about 11 cm — across every epoch, and turned
+up a one-epoch lag in the *reference* CSV's altitude, HDOP and satellite
+columns rather than an error here. Committing such a fixture means publishing a
+real route, so it needs a recording whose location is not sensitive.
 
 ### Verify the screen, not the byte stream
 

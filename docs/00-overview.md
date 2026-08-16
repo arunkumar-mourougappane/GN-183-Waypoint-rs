@@ -12,6 +12,16 @@ been, how fast is it moving, and which satellites it's actually using.
 Waypoint is that tool: an NMEA debugger and trip visualizer with a live map/track
 view and a parameter dashboard, driven from serial, file replay, or TCP.
 
+## Where it came from
+
+Waypoint was written to test and drive
+[tab5-gps-monitor](https://github.com/arunkumar-mourougappane/tab5-gps-monitor),
+an M5Stack Tab5 (ESP32-P4) application that reads an AT6668 GPS/BDS unit. That
+device emits NMEA over UART, serves it over a Wi-Fi AP on TCP 10110, and logs it
+to SD — which is exactly why this reads serial, TCP and files, and why the
+live-versus-recorded distinction runs through the whole design. The three
+sources are not a generality exercise; they are one device's three outputs.
+
 ## Goals
 
 - Ingest NMEA 0183 from serial port, TCP socket, or a static/replayed log file
