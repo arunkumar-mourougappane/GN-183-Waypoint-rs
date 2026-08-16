@@ -65,7 +65,7 @@ impl Default for SourceForm {
             tcp_addr: "127.0.0.1:10110".to_string(),
             file_path: String::new(),
             replay: true,
-            speed: 4.0,
+            speed: 1.0,
         }
     }
 }

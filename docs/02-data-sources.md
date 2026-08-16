@@ -80,9 +80,11 @@ phrase it identically, while the plain `label()` stays technical for logs. See [
 
 ## File (static log or replay)
 
-- Two modes worth distinguishing in the UI:
-  - **Instant load**: parse the whole file, compute trip stats, show the full
-    track immediately — useful for "what happened on this log" debugging.
+- Two modes worth distinguishing in the UI. Replay is the default: a log opened
+  without a mode arrives with a working transport, where an instant load would
+  present a frontend with nothing to pause, retime or scrub and look broken.
+  - **Instant load** (`--instant`): parse the whole file, compute trip stats,
+    show the full track immediately — useful for "what happened on this log".
   - **Replay**: pace sentence emission using the timestamps embedded in
     RMC/GGA/ZDA, so the live map/dashboard animate the same way they would from
     a real device. This is what makes the file source useful for testing the

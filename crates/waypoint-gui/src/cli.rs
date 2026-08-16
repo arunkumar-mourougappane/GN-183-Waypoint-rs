@@ -46,9 +46,10 @@ pub struct SourceOptions {
     #[arg(long, default_value_t = 9600)]
     pub baud: u32,
 
-    /// Replay a log in its original timing instead of loading it at once
+    /// Parse a log as fast as it can be read, instead of replaying it in its
+    /// original timing. Skips straight to the finished track.
     #[arg(long)]
-    pub replay: bool,
+    pub instant: bool,
 
     /// Replay speed multiplier
     #[arg(long, default_value_t = 1.0, value_name = "X")]
@@ -68,12 +69,15 @@ impl SourceArgs {
             return Some(SourceConfig::Tcp { addr: addr.clone() });
         }
         if let Some(path) = &self.file {
-            let mode = if options.replay {
+            // A log replays by default. Loading it instantly leaves nothing to
+            // pause, retime or scrub, which looks like a frontend missing its
+            // features rather than a deliberate mode.
+            let mode = if options.instant {
+                FileMode::Instant
+            } else {
                 FileMode::Replay {
                     control: ReplayControl::new(options.speed),
                 }
-            } else {
-                FileMode::Instant
             };
             return Some(SourceConfig::File {
                 path: path.clone(),
@@ -81,5 +85,57 @@ impl SourceArgs {
             });
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use waypoint_core::SourceControls;
+
+    fn config_for(args: &[&str]) -> SourceConfig {
+        let cli = Cli::parse_from(args);
+        cli.source
+            .to_config(&cli.options)
+            .expect("a source should have been built")
+    }
+
+    /// Opening a log must replay it. Loading it instantly leaves nothing to
+    /// pause, retime or scrub, which reads as a frontend missing its features
+    /// rather than as a deliberate mode.
+    #[test]
+    fn a_log_replays_by_default() {
+        let config = config_for(&["waypoint", "--file", "track.nmea"]);
+        assert_eq!(config.controls(), SourceControls::Replay);
+    }
+
+    #[test]
+    fn instant_is_opt_in() {
+        let config = config_for(&["waypoint", "--file", "track.nmea", "--instant"]);
+        assert_eq!(config.controls(), SourceControls::Instant);
+    }
+
+    #[test]
+    fn live_sources_are_never_replays() {
+        assert_eq!(
+            config_for(&["waypoint", "--serial", "/dev/ttyUSB0"]).controls(),
+            SourceControls::Live
+        );
+        assert_eq!(
+            config_for(&["waypoint", "--tcp", "127.0.0.1:10110"]).controls(),
+            SourceControls::Live
+        );
+    }
+
+    #[test]
+    fn replay_speed_comes_from_the_flag() {
+        let config = config_for(&["waypoint", "--file", "track.nmea", "--speed", "8"]);
+        match config {
+            SourceConfig::File {
+                mode: FileMode::Replay { control },
+                ..
+            } => assert_eq!(control.speed(), 8.0),
+            other => panic!("expected a replay, got {other:?}"),
+        }
     }
 }

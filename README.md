@@ -34,7 +34,7 @@ Live serial, TCP, or a log loaded all at once:
 cargo run -p waypoint-gui -- --list-ports
 cargo run -p waypoint-gui -- --serial /dev/tty.usbserial-0001 --baud 9600
 cargo run -p waypoint-tui -- --tcp 192.168.1.50:10110
-cargo run -p waypoint-tui -- --file drive.nmea          # no --replay: parse immediately
+cargo run -p waypoint-tui -- --file drive.nmea --instant   # skip to the finished track
 ```
 
 The GUI can also be started with no source and configured from its **Source…** panel
@@ -45,8 +45,8 @@ The GUI can also be started with no source and configured from its **Source…**
 | `--serial <PORT> [--baud N]` | Read from a serial port (default 9600 baud) |
 | `--tcp <HOST:PORT>` | Read from a TCP endpoint, with reconnect backoff |
 | `--file <PATH>` | Read a recorded log |
-| `--replay [--speed X]` | Pace a log by its own timestamps instead of loading it at once |
-| | Without `--replay` a log is parsed as fast as it can be read |
+| `--speed X` | Replay rate; a log replays at real time by default |
+| `--instant` | Parse a log as fast as it can be read, skipping to the finished track. No transport, since there is nothing left to control |
 | `--list-ports` | Print available serial ports and exit |
 
 ### Live sources versus recordings

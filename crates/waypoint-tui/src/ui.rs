@@ -78,24 +78,26 @@ pub fn draw(frame: &mut Frame, state: &GnssState, bottom: BottomPanel, transport
 /// the position, the rest as track. Terminals cannot offer a draggable widget,
 /// so the arrow keys move it and this shows where it is.
 fn scrub_bar<'a>(fraction: f32, width: usize) -> Vec<Span<'a>> {
-    let filled = ((fraction.clamp(0.0, 1.0) * width as f32).round() as usize).min(width);
-    let played = filled.saturating_sub(1);
+    // The handle always occupies exactly one cell, so it is visible at the very
+    // start of a replay rather than appearing only once playback moves off zero.
+    let track = width.max(1) - 1;
+    let handle = (fraction.clamp(0.0, 1.0) * track as f32).round() as usize;
 
     vec![
         Span::styled(
-            "─".repeat(played),
+            "━".repeat(handle),
             Style::default()
                 .fg(Color::Magenta)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            if filled > 0 { "●" } else { "" }.to_string(),
+            "●",
             Style::default()
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            "─".repeat(width - filled),
+            "─".repeat(track - handle),
             Style::default().fg(Color::DarkGray),
         ),
     ]
@@ -888,17 +890,20 @@ mod tests {
                 .collect::<Vec<_>>()
         };
 
+        // The handle is present at every position, including the very start.
         let start = at(0.0);
         assert_eq!(start[0], "", "nothing played at the start");
-        assert_eq!(start[2].chars().count(), 20, "all track remaining");
+        assert_eq!(start[1], "●", "the handle must be visible at zero");
+        assert_eq!(start[2].chars().count(), 19, "all track remaining");
 
         let middle = at(0.5);
-        assert_eq!(middle[0].chars().count(), 9);
+        assert_eq!(middle[0].chars().count(), 10);
         assert_eq!(middle[1], "●");
-        assert_eq!(middle[2].chars().count(), 10);
+        assert_eq!(middle[2].chars().count(), 9);
 
         let end = at(1.0);
         assert_eq!(end[0].chars().count(), 19);
+        assert_eq!(end[1], "●");
         assert_eq!(end[2], "", "no track left at the end");
     }
 
