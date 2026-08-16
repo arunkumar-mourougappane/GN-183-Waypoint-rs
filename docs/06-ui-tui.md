@@ -26,10 +26,13 @@ where a windowing system isn't available or wanted.
 
 ## Track panel
 
-- `ratatui::widgets::canvas::Canvas` with a `Points`/`Line` shape plotting
-  `TrackPoint`s in lat/lon space, auto-scaled to the track's bounding box (no
-  real map tiles — terminals can't render raster/vector tiles). This is the TUI's
-  answer to the GUI's `walkers` map: same data, ASCII/braille rendering instead.
+- `ratatui::widgets::canvas::Canvas` plotting `TrackPoint`s in lat/lon space,
+  auto-scaled to the track's bounding box. This is the TUI's answer to the GUI's
+  `walkers` map: same data, braille rendering instead.
+- Beneath the track, a basemap of roads, water and green space. Raster tiles are
+  not something a character grid can show, but *vector* tiles are just polylines,
+  and a canvas already strokes those — so the geometry is drawn rather than the
+  imagery. See [Basemap](#basemap).
 - Current position marked distinctly (different color/glyph) from the trail.
 - No-fix state: same "last known position, dimmed" treatment as the GUI.
 
@@ -82,6 +85,35 @@ already there.
   when data arrives and still polls input promptly on a silent stream.
 - Because logs would corrupt the alternate screen, tracing output is only
   enabled when `WAYPOINT_LOG` names a file.
+
+## Basemap
+
+Vector tiles (Mapbox Vector Tile format, from OpenFreeMap's OpenMapTiles build)
+are decoded with `mvt-reader` and stroked onto the same canvas as the track, on a
+layer beneath it.
+
+- **Online first, cache always.** A tile is fetched over HTTP when it is not
+  already on disk, and everything fetched is written to a platform cache
+  (`~/Library/Caches/waypoint/tiles`, `%LOCALAPPDATA%`, `$XDG_CACHE_HOME`) via
+  the `directories` crate. That cache is what makes the offline path work: a
+  tile can only be used offline if it was fetched at least once. Tiles already
+  on disk are read from there rather than refetched — "prefer online" governs
+  where a tile is *obtained*, not whether to re-download what is already held.
+- The panel title says which is in force: `map online`, `map cached`,
+  `map loading` or `map unavailable`. `--no-map` disables it entirely and makes
+  no network requests.
+- **The tile URL is resolved, not hardcoded.** It embeds a dated planet snapshot
+  that is retired periodically, so the TileJSON document is read once per session
+  to find the current one. A pinned URL is a basemap that stops working on
+  someone else's schedule — `walkers`' own pinned snapshot was already eight
+  months stale when this was written.
+- **Detail is earned by zooming in.** A city's full street network is far denser
+  than a braille grid can hold; drawn wholesale it fills in solid and buries the
+  track. A wide view keeps only water and major roads — the shapes that orient
+  you — and side streets, parks and landcover appear once the view is under about
+  a kilometre across.
+- Attribution is shown along the bottom of the panel whenever tiles are on
+  screen, as the data licence requires.
 
 ## Parity with the GUI
 

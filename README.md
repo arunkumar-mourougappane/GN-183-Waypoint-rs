@@ -67,6 +67,12 @@ can honour:
 Rate and pause apply to a replay already in progress, without restarting it and
 losing the track accumulated so far.
 
+The terminal draws a basemap too — roads, water and green space from vector
+tiles, stroked onto the same braille canvas as the track. Tiles are fetched when
+the network is reachable and read from a platform cache when it is not, so a
+session works at a desk and in a field with no signal; `--no-map` turns it off
+and makes no network requests.
+
 Both frontends show the same figures. The polar sky view, map zoom and the
 runtime source picker are GUI-only — see
 [`docs/06-ui-tui.md`](docs/06-ui-tui.md) for why each is a deliberate omission

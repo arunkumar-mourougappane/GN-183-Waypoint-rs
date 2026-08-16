@@ -6,13 +6,14 @@ use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::symbols::Marker;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::canvas::{Canvas, Points};
+use ratatui::widgets::canvas::{Canvas, Line as CanvasLine, Points};
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Sparkline, Table};
 use waypoint_core::{
     Constellation, FixMode, GnssState, KNOTS_TO_KMH, SentenceOutcome, StatusTone, hdop_rating,
 };
 
 use crate::Transport;
+use crate::basemap::{ATTRIBUTION, Availability, Basemap, Shape};
 
 /// What the lower panel shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,7 +33,13 @@ impl BottomPanel {
 
 /// `transport` decides which affordances the dashboard offers: a live receiver
 /// gets liveness and acquisition readouts, a recording gets position and rate.
-pub fn draw(frame: &mut Frame, state: &GnssState, bottom: BottomPanel, transport: &Transport) {
+pub fn draw(
+    frame: &mut Frame,
+    state: &GnssState,
+    bottom: BottomPanel,
+    transport: &Transport,
+    basemap: &Basemap,
+) {
     // A replay gets a second header row for its transport, the way a player
     // puts the scrub bar on its own line rather than crowding the status.
     let header_height = if matches!(transport, Transport::Replay { .. }) {
@@ -52,7 +59,7 @@ pub fn draw(frame: &mut Frame, state: &GnssState, bottom: BottomPanel, transport
 
     let [track_area, side] =
         Layout::horizontal([Constraint::Min(30), Constraint::Length(40)]).areas(main);
-    draw_track(frame, track_area, state);
+    draw_track(frame, track_area, state, basemap);
 
     // The live panel carries one extra row (data rate and acquisition), so give
     // it the space only when it has something to say.
@@ -112,6 +119,24 @@ fn fix_style(mode: FixMode) -> Style {
         FixMode::Fix3D => Style::default()
             .fg(Color::Green)
             .add_modifier(Modifier::BOLD),
+    }
+}
+
+/// Longitude span below which side streets, parks and landcover are worth
+/// drawing. Roughly a kilometre at mid latitudes.
+const DETAIL_SPAN_DEG: f64 = 0.012;
+
+/// Muted, so the basemap stays underneath the track rather than competing with
+/// it. The track is the subject; this is the context it sits in.
+fn shape_color(shape: Shape) -> Color {
+    match shape {
+        Shape::Landcover => Color::DarkGray,
+        Shape::Park => Color::Green,
+        Shape::Water | Shape::Waterway => Color::Blue,
+        Shape::MinorRoad => Color::DarkGray,
+        Shape::MajorRoad => Color::Gray,
+        Shape::Motorway => Color::Yellow,
+        Shape::Rail => Color::Magenta,
     }
 }
 
@@ -237,10 +262,21 @@ fn draw_header(frame: &mut Frame, area: Rect, state: &GnssState, transport: &Tra
 /// Lat/lon plotted on a braille canvas — the terminal's stand-in for the GUI's
 /// tile map. Bounds are corrected so the track keeps a roughly true shape
 /// instead of being stretched by the cell aspect ratio.
-fn draw_track(frame: &mut Frame, area: Rect, state: &GnssState) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(format!(" Track ({} points) ", state.track.len()));
+fn draw_track(frame: &mut Frame, area: Rect, state: &GnssState, basemap: &Basemap) {
+    let availability = basemap.availability();
+    let mut block = Block::default().borders(Borders::ALL).title(format!(
+        " Track ({} points) · {} ",
+        state.track.len(),
+        availability.label()
+    ));
+    // Required by the tile data's licence whenever it is on screen.
+    if matches!(availability, Availability::Online | Availability::Offline) {
+        block = block.title_bottom(
+            Line::from(format!(" {ATTRIBUTION} "))
+                .right_aligned()
+                .style(Style::default().fg(Color::DarkGray)),
+        );
+    }
 
     if state.track.is_empty() {
         frame.render_widget(
@@ -256,12 +292,42 @@ fn draw_track(frame: &mut Frame, area: Rect, state: &GnssState) {
     let trail: Vec<(f64, f64)> = state.track.iter().map(|p| (p.lon, p.lat)).collect();
     let current = state.position().map(|(lat, lon)| (lon, lat));
 
+    // Ask for coverage of what is about to be drawn; tiles arrive on a
+    // background task and appear at a later redraw.
+    basemap.request(x_bounds[0], y_bounds[0], x_bounds[1], y_bounds[1]);
+
+    // A braille grid holds a few thousand dots, and a city's full street
+    // network is far denser than that — drawn wholesale it fills in solid and
+    // buries the track. Detail is earned by zooming in: a wide view keeps only
+    // the shapes that orient you, and side streets appear once there is room.
+    let detailed = (x_bounds[1] - x_bounds[0]) < DETAIL_SPAN_DEG;
+    let shapes: Vec<_> = basemap
+        .features()
+        .into_iter()
+        .filter(|feature| detailed || feature.shape.is_landmark())
+        .collect();
+
     let canvas = Canvas::default()
         .block(block)
         .marker(Marker::Braille)
         .x_bounds(x_bounds)
         .y_bounds(y_bounds)
         .paint(move |ctx| {
+            // Basemap first, so the track is never buried under a road.
+            for feature in &shapes {
+                let color = shape_color(feature.shape);
+                for pair in feature.points.windows(2) {
+                    ctx.draw(&CanvasLine {
+                        x1: pair[0].0,
+                        y1: pair[0].1,
+                        x2: pair[1].0,
+                        y2: pair[1].1,
+                        color,
+                    });
+                }
+            }
+            ctx.layer();
+
             ctx.draw(&Points {
                 coords: &trail,
                 color: Color::Cyan,
@@ -760,8 +826,10 @@ mod tests {
     fn render_transport(bottom: BottomPanel, transport: &Transport) -> String {
         let state = sample_state();
         let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        // Disabled, so rendering never reaches for the network.
+        let basemap = Basemap::new(false);
         terminal
-            .draw(|frame| draw(frame, &state, bottom, transport))
+            .draw(|frame| draw(frame, &state, bottom, transport, &basemap))
             .unwrap();
         buffer_text(&terminal)
     }
@@ -856,6 +924,7 @@ mod tests {
                         paused: false,
                         progress: Some(1.0),
                     },
+                    &Basemap::new(false),
                 )
             })
             .unwrap();

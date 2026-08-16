@@ -1,5 +1,6 @@
 //! Terminal frontend for the Waypoint NMEA debugger.
 
+mod basemap;
 mod cli;
 mod ui;
 
@@ -10,6 +11,7 @@ use clap::Parser;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use waypoint_core::{Engine, SourceControls, TripConfig, available_serial_ports};
 
+use crate::basemap::Basemap;
 use crate::cli::Cli;
 use crate::ui::BottomPanel;
 
@@ -49,13 +51,24 @@ async fn main() -> Result<()> {
     let engine = Engine::new(TripConfig::default());
     engine.set_source(config);
 
+    let basemap = Basemap::new(!cli.options.no_map);
+    if let Some(cache) = basemap.cache_dir() {
+        // Worth recording: it is where to look when the map works at a desk and
+        // not in the field, and what to clear to force a refetch.
+        tracing::info!(path = %cache.display(), "basemap tile cache");
+    }
+
     let mut terminal = ratatui::init();
-    let result = run(&engine, &mut terminal).await;
+    let result = run(&engine, &basemap, &mut terminal).await;
     ratatui::restore();
     result
 }
 
-async fn run(engine: &Engine, terminal: &mut ratatui::DefaultTerminal) -> Result<()> {
+async fn run(
+    engine: &Engine,
+    basemap: &Basemap,
+    terminal: &mut ratatui::DefaultTerminal,
+) -> Result<()> {
     let mut updates = engine.updates();
     let mut bottom = BottomPanel::Plots;
 
@@ -112,7 +125,7 @@ async fn run(engine: &Engine, terminal: &mut ratatui::DefaultTerminal) -> Result
 
         let transport = Transport::sample(engine);
         let state = engine.state();
-        terminal.draw(|frame| ui::draw(frame, &state, bottom, &transport))?;
+        terminal.draw(|frame| ui::draw(frame, &state, bottom, &transport, basemap))?;
     }
 }
 

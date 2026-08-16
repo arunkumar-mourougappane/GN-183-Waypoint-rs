@@ -20,3 +20,7 @@ anyhow.workspace = true
 chrono.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+mvt-reader = "2.4"
+directories = "6"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "gzip"] }
+geo-types = "0.7"

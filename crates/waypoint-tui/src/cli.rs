@@ -47,6 +47,10 @@ pub struct SourceOptions {
     #[arg(long)]
     pub instant: bool,
 
+    /// Draw the track without a basemap, and make no network requests
+    #[arg(long)]
+    pub no_map: bool,
+
     /// Replay speed multiplier
     #[arg(long, default_value_t = 1.0, value_name = "X")]
     pub speed: f32,
