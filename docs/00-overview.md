@@ -24,7 +24,21 @@ view and a parameter dashboard, driven from serial, file replay, or TCP.
 - Compute trip statistics: distance traveled, elapsed vs. moving time, avg/max
   speed, elevation gain/loss.
 - Offer two frontends against the same core: a native GUI (map + gauges) and a
-  terminal UI (for headless/SSH/embedded use).
+  terminal UI (for headless/SSH/embedded use). Both show the same figures, and
+  both put the track against real geography — the GUI on map tiles, the terminal
+  on vector road and water geometry drawn in braille.
+- Treat a live receiver and a recorded log as the different things they are: one
+  can be paused, retimed and scrubbed; the other can fall silent and has to
+  acquire a fix.
+
+## What it is not
+
+The distinction worth stating early, because it shapes everything: this is a
+**debugger**, not a tracker. It exists to answer "what is this receiver doing
+and why", so it keeps what a tracker would throw away — the raw sentences, the
+checksum failures, the parse errors, the satellites in view but unused, the
+dead-reckoned fix that should not count toward distance. Anything that hides bad
+data to make the display tidier is working against the purpose.
 
 ## Non-goals (for now)
 
@@ -46,7 +60,18 @@ view and a parameter dashboard, driven from serial, file replay, or TCP.
 | GSV | Satellites-in-view sentence: per-satellite PRN, elevation, azimuth, SNR |
 | COG | Course Over Ground — direction of travel, not necessarily where the bow points |
 | Checksum | XOR of all bytes between `$`/`!` and `*`, used to validate sentence integrity |
+| TTFF | Time to first fix: how long a receiver took to acquire from a cold start |
+| MVT | Mapbox Vector Tile — map geometry as coordinates rather than imagery, which is what makes a basemap possible in a terminal |
 
-See [`01-nmea-protocol.md`](01-nmea-protocol.md) for the full sentence reference,
-[`03-architecture.md`](03-architecture.md) for how the pieces fit together, and
-[`08-roadmap.md`](08-roadmap.md) for build order.
+## Where to read next
+
+| | |
+|---|---|
+| [`01-nmea-protocol.md`](01-nmea-protocol.md) | The sentences consumed, field by field |
+| [`02-data-sources.md`](02-data-sources.md) | Serial/TCP/file ingestion, and the live-versus-recorded split the UI branches on |
+| [`03-architecture.md`](03-architecture.md) | Workspace layout, `Engine`, concurrency |
+| [`04-crate-selection.md`](04-crate-selection.md) | Every dependency, why it is there, and what was rejected |
+| [`05-ui-gui.md`](05-ui-gui.md) / [`06-ui-tui.md`](06-ui-tui.md) | What each frontend shows, and where they deliberately differ |
+| [`07-trip-statistics.md`](07-trip-statistics.md) | How each figure is computed, and the guards against bad fixes |
+| [`08-roadmap.md`](08-roadmap.md) | What is built, what is open, what is deferred |
+| [`09-testing.md`](09-testing.md) | How this is verified, and what past bugs taught about fixtures |

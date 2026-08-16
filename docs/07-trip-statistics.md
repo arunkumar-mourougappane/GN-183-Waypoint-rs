@@ -8,14 +8,24 @@ track on every update — each new `TrackPoint` updates running totals in O(1).
 
 | Metric | Computation |
 |---|---|
-| **Distance traveled** | Cumulative sum of haversine distance between consecutive fixes (`geo` crate's haversine algorithm — see [`04-crate-selection.md`](04-crate-selection.md)). Skip pairs with no fix or an implausible jump (see below). |
+| **Distance traveled** | Cumulative sum of haversine distance between consecutive fixes, via `haversine_distance_m` in `trip.rs`. Pairs with no fix, or an implausible jump (below), are skipped. |
 | **Elapsed time** | Timestamp of latest fix minus timestamp of first fix. |
 | **Moving time** | Sum of inter-fix intervals where instantaneous speed exceeds a threshold (e.g. 0.5-1 kt, to absorb GPS jitter while stationary — exact threshold should be user-configurable since it's receiver/noise dependent). |
 | **Stopped time** | `elapsed - moving`. |
 | **Average speed** | Distance / moving time (moving average, more meaningful than distance/elapsed for anything with stops) — report both if there's room. |
-| **Max speed** | Max instantaneous speed (from RMC/VTG) seen over the trip, ideally with basic outlier rejection (a single-epoch spike far above the surrounding samples is more likely multipath/noise than real). |
-| **Elevation gain / loss** | Sum of positive / negative altitude deltas between consecutive fixes. GGA altitude is noisy (typically ±5-10 m even with a good fix) — consider a smoothing pass (e.g. only accumulate deltas beyond a noise-floor threshold) before treating this as reportable rather than cosmetic. |
+| **Max speed** | Max instantaneous speed (from RMC/VTG) seen over the trip. Not separately outlier-filtered: the jump rejection below already discards the epochs where a spurious speed would come from. |
+| **Elevation gain / loss** | Sum of positive / negative altitude change, measured against a *moving reference* rather than the previous sample. GGA altitude is noisy (±5-10 m even with a good fix), so a delta is only taken once it clears a noise floor, at which point the reference moves to the new altitude. |
 | **Avg HDOP / avg satellite count** | Running mean over the trip — a quick "how good was reception overall" summary distinct from the live instantaneous values shown in the status panel. |
+
+### Why the reference moves
+
+Comparing each sample to the one before it looks equivalent and is not. A steady
+climb of 0.3 m per fix never produces a single delta above a 1 m floor, so every
+step is discarded and a real ascent reports as zero — which is exactly what the
+first implementation here did, reading `+0 m` up a hill. Holding a reference and
+moving it only when the floor is cleared accumulates the same climb correctly,
+while still rejecting jitter around a fixed altitude. Both behaviours are pinned
+by tests in `trip.rs`.
 
 ## Data quality guards
 

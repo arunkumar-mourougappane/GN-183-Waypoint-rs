@@ -42,9 +42,29 @@ divide exactly by any replay rate.
   signal bars, per-constellation counts, DOP triple with quality bands, and the
   trip-statistics engine with its data-quality guards.
 
-## Phase 6 — Polish (open)
+## Phase 6 — Transport and divergence ✅
 
-- Offline map tiles (`.pmtiles`) for field use with no connectivity.
+- The two frontends stopped pretending a receiver and a recording are the same
+  thing. `SourceControls` reports `Live`, `Replay` or `Instant`, and each
+  frontend offers only what the running source can honour — see
+  [`02-data-sources.md`](02-data-sources.md).
+- A recording gained a real transport: pause, rate, restart, and a scrub bar
+  that seeks rather than merely reporting, working while paused.
+- A receiver gained liveness instead: sentences per second, a stale warning, and
+  time to first fix.
+- Status wording follows the source — a log is opened and reaches an end; only a
+  link connects and drops out.
+
+## Phase 7 — Terminal basemap ✅
+
+- Roads, water and green space beneath the TUI's track, decoded from vector
+  tiles and stroked onto the same canvas. Online when reachable, from a platform
+  cache when not. See [`06-ui-tui.md`](06-ui-tui.md).
+
+## Phase 8 — Polish (open)
+
+- Offline map tiles (`.pmtiles`) for the **GUI**; `walkers` supports them
+  natively, and the TUI already has its own cache.
 - Session export (track + trip stats as JSON via `serde`) and replay from an
   exported session.
 - GST-based accuracy display as an advanced panel.
@@ -52,11 +72,22 @@ divide exactly by any replay rate.
   floor) as UI settings rather than defaults only.
 - Sentence filtering in the raw view — a debugger benefits from "show me only
   the GSA sentences" when a receiver is misbehaving.
+- A time-based scrub readout (`01:23 / 05:00`). Position is byte-based today,
+  which only maps to log time if the sentence rate is uniform; real timestamps
+  would need a pre-scan for the log's first and last.
+- Ground-truth parser tests. The fixture is generated here, so it proves the
+  parser handles real *shapes*, not that it produces correct *coordinates* —
+  that needs a recording published with its decoded track.
 
 ## Explicitly deferred
 
 - Simultaneous GUI+TUI against one live session. `Engine` already supports
   multiple subscribers, so this is a frontend-launcher question, not an
   architectural one — not built until there is a concrete need.
+- Recording a live session to a log the file source can replay. It would close
+  the loop between the two source kinds and is the most obviously missing
+  live-only feature, but nothing has needed it yet.
+- Map zoom/pan and a runtime source picker in the TUI, and a polar sky view —
+  each deliberately GUI-only, with reasons in [`06-ui-tui.md`](06-ui-tui.md).
 - AIS, route planning, receiver configuration — see
   [`00-overview.md`](00-overview.md) non-goals.

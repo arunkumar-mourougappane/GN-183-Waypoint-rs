@@ -51,10 +51,10 @@ phrase it identically, while the plain `label()` stays technical for logs. See [
 
 ## Serial
 
-- Crate: [`serialport`](https://crates.io/crates/serialport) (v4.9.0) for a
-  blocking-read-in-a-dedicated-thread approach, or
-  [`tokio-serial`](https://crates.io/crates/tokio-serial) (v5.5.0, wraps
-  `mio-serial`) if the app is async end-to-end via `tokio`.
+- Crate: [`serialport`](https://crates.io/crates/serialport), read on a blocking
+  task with a short timeout — the timeout is what makes cancellation observable
+  without interrupting a blocked read. See
+  [`04-crate-selection.md`](04-crate-selection.md) for why not `tokio-serial`.
 - Config needed: port path, baud rate (commonly 4800 for older/basic GPS, 9600 or
   38400/115200 for many modern modules — must be user-specified, not guessed),
   8N1 framing (near-universal default).

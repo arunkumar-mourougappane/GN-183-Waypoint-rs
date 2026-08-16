@@ -122,9 +122,23 @@ field is absent or when precise UTC is needed independent of a fix.
 
 ## Rust parsing
 
-The [`nmea`](https://crates.io/crates/nmea) crate (v0.8.0 as of 2026-08-15) covers
-all of the sentences above plus GNS, HDT, TXT and others, and exposes a `Satellite`
-struct (PRN, SNR, elevation, azimuth) for GSV data. Use its stateful
-`Nmea::parse()`/`parse_for_fix()` API to get an aggregated "current fix" view
-without hand-rolling GGA/RMC/GSA merge logic — see
-[`04-crate-selection.md`](04-crate-selection.md).
+The [`nmea`](https://crates.io/crates/nmea) crate covers all of the sentences
+above plus GNS, HDT, TXT and others, and exposes a `Satellite` struct (PRN, SNR,
+elevation, azimuth) for GSV data.
+
+Its *stateless* `parse_str` is what this uses, not the stateful `Nmea` parser.
+The stateful one looks like the obvious choice — it merges GGA/RMC/GSA into a
+"current fix" for you — but it does not retain GSA's 2D/3D mode (`GsaMode2`) and
+does not group GSV by talker, which are exactly the two things the fix badge and
+the per-constellation counts need. `Aggregator` in `waypoint-core` does that
+bookkeeping instead; see [`04-crate-selection.md`](04-crate-selection.md).
+
+Two behaviours worth knowing, both learned the hard way against real receiver
+output:
+
+- A `GN` talker emits one GSA **per constellation** in the same cycle, so a
+  repeated talker ID is normal there and must accumulate. Treating it as a new
+  cycle leaves only the last constellation marked as used.
+- A constellation with nothing in view still reports itself
+  (`$GQGSV,1,1,00,1*65`), and satellites in view but untracked carry an empty
+  SNR field — which is not the same as a measured zero.

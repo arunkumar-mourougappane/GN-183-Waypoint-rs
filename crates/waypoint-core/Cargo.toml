@@ -10,7 +10,6 @@ repository.workspace = true
 [dependencies]
 nmea.workspace = true
 serialport.workspace = true
-geo.workspace = true
 chrono.workspace = true
 tokio.workspace = true
 tracing.workspace = true

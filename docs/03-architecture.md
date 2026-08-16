@@ -16,22 +16,41 @@ GN-183-Waypoint-rs/
 │   │       ├── state.rs     # GnssState, TrackPoint, SatelliteInfo, FixMode/FixQuality
 │   │       ├── trip.rs      # TripStats, TripConfig, haversine
 │   │       └── engine.rs    # Engine: source -> parser -> state -> frontends
-│   ├── waypoint-gui/        # eframe/egui + walkers + egui_plot binary
+│   ├── waypoint-gui/        # eframe/egui binary
+│   │   └── src/
+│   │       ├── app.rs       # eframe App: engine, map state, source picker
+│   │       ├── map.rs       # walkers map + the track drawn as a Plugin
+│   │       ├── panels.rs    # status, trip, plots, raw sentences
+│   │       └── skyview.rs   # polar satellite view and signal bars
 │   └── waypoint-tui/        # ratatui binary
-├── assets/sample.nmea       # synthetic drive log for testing without hardware
+│       └── src/
+│           ├── ui.rs        # the whole dashboard, rendered from GnssState
+│           ├── main.rs      # event loop, Action key mapping, Transport
+│           └── basemap/     # vector-tile basemap: tiles.rs, decode.rs, mod.rs
+├── assets/
+│   ├── sample.nmea          # synthetic drive log for testing without hardware
+│   └── generate_sample.py   # regenerates it; documents every deliberate oddity
 └── docs/
 ```
 
 `waypoint-core` has zero knowledge of either frontend. Both binaries depend on it
-and on nothing GUI/TUI-specific from each other.
+and on nothing GUI/TUI-specific from each other, which is what lets the TUI stay
+buildable on a machine with no windowing system at all.
+
+The split is not merely tidiness: the two frontends deliberately differ. See
+[`02-data-sources.md`](02-data-sources.md) for the live-versus-recorded
+distinction they both branch on, and [`06-ui-tui.md`](06-ui-tui.md) for what the
+terminal offers instead of a polar sky view, a zoomable map and a source picker.
 
 ## `waypoint-core` responsibilities
 
 1. **Sources** — `NmeaSource` implementations for serial/TCP/file (see
    [`02-data-sources.md`](02-data-sources.md)), each pushing raw lines into an
    `mpsc` channel.
-2. **Parsing** — wraps the `nmea` crate's stateful parser; validates checksums;
-   converts talker ID + sentence into typed events.
+2. **Parsing** — validates checksums centrally, then folds sentences in through
+   the `nmea` crate's *stateless* API. The crate's stateful parser is not used:
+   it drops GSA's 2D/3D fix mode and does not group GSV by talker, so
+   `Aggregator` does that bookkeeping itself.
 3. **State aggregation** — a `GnssState` struct holding the latest fix
    (position, altitude, speed, course, fix type/quality, HDOP), the satellite
    table (per constellation, from reassembled GSV groups), and the accumulated
@@ -65,6 +84,10 @@ and on nothing GUI/TUI-specific from each other.
   notifications, redrawing on either.
 - Neither frontend blocks on I/O directly; all source I/O lives in
   `waypoint-core` tasks.
+- The TUI's basemap runs on the same runtime: a redraw asks for coverage of the
+  view and returns immediately, while tiles are fetched, decoded and cached on a
+  background task and appear at a later frame. Rendering never waits on the
+  network.
 
 ## Why not a single always-on binary with both UIs live
 
