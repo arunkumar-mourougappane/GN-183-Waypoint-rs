@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/arunkumar-mourougappane/GN-183-Waypoint-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/arunkumar-mourougappane/GN-183-Waypoint-rs/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/arunkumar-mourougappane/GN-183-Waypoint-rs?sort=semver)](https://github.com/arunkumar-mourougappane/GN-183-Waypoint-rs/releases)
+[![crates.io](https://img.shields.io/crates/v/gn183-waypoint-core?label=crates.io)](https://crates.io/crates/gn183-waypoint-core)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Rust 1.88+](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://www.rust-lang.org)
 [![Platforms](https://img.shields.io/badge/platforms-linux%20%7C%20macos%20%7C%20windows-lightgrey.svg)](#running)
