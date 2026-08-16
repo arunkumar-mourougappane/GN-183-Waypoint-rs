@@ -1,5 +1,6 @@
 [package]
 name = "gn183-waypoint-tui"
+readme = "README.md"
 description = "Terminal dashboard for the Waypoint NMEA 0183 debugger"
 version.workspace = true
 edition.workspace = true

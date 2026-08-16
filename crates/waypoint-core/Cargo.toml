@@ -1,5 +1,6 @@
 [package]
 name = "gn183-waypoint-core"
+readme = "README.md"
 description = "Transport-agnostic NMEA 0183 ingestion, parsing and GNSS state aggregation for Waypoint"
 version.workspace = true
 edition.workspace = true
