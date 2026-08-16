@@ -1,0 +1,117 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  # Lets a release be rebuilt without moving the tag.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build (e.g. v0.1.0)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # Same packages CI installs: libudev for serialport, xkb/xcb for the
+      # windowing stack. macOS and Windows get these from their SDKs.
+      - name: Install system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            libudev-dev \
+            libxkbcommon-dev \
+            libxcb-render0-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev
+
+      - name: Build
+        run: cargo build --release --workspace
+
+      # Both frontends ship together: the terminal one is what runs over SSH,
+      # and the map one is what you reach for at a desk.
+      - name: Package (unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          [ -n "${{ github.event.inputs.tag }}" ] && version="${{ github.event.inputs.tag }}" && version="${version#v}"
+          name="waypoint-${version}-${{ matrix.target }}"
+          mkdir -p "dist/$name"
+          cp target/release/waypoint-gui target/release/waypoint-tui "dist/$name/"
+          cp README.md LICENSE RELEASE_NOTES.md "dist/$name/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          echo "ASSET=dist/$name.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Package (windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          [ -n "${{ github.event.inputs.tag }}" ] && version="${{ github.event.inputs.tag }}" && version="${version#v}"
+          name="waypoint-${version}-${{ matrix.target }}"
+          mkdir -p "dist/$name"
+          cp target/release/waypoint-gui.exe target/release/waypoint-tui.exe "dist/$name/"
+          cp README.md LICENSE RELEASE_NOTES.md "dist/$name/"
+          (cd dist && 7z a "$name.zip" "$name" >/dev/null)
+          echo "ASSET=dist/$name.zip" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: ${{ env.ASSET }}
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      # Created as a draft: a release is outward-facing, so it gets a human
+      # look before anyone can download it.
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          gh release create "$tag" \
+            --draft \
+            --title "$tag" \
+            --notes-file RELEASE_NOTES.md \
+            dist/* \
+            || gh release upload "$tag" dist/* --clobber

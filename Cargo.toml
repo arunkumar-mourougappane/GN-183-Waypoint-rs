@@ -5,9 +5,14 @@ members = ["crates/waypoint-core", "crates/waypoint-gui", "crates/waypoint-tui"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+# Let-chains are used throughout and stabilised here, in the 2024 edition only.
+rust-version = "1.88"
 license = "MIT"
-authors = ["Arunkumar Mourougappane"]
-repository = "https://github.com/amouroug/GN-183-Waypoint-rs"
+authors = ["Arunkumar Mourougappane <amouroug.dev@gmail.com>"]
+repository = "https://github.com/arunkumar-mourougappane/GN-183-Waypoint-rs"
+homepage = "https://github.com/arunkumar-mourougappane/GN-183-Waypoint-rs"
+keywords = ["nmea", "gps", "gnss", "tui", "debugger"]
+categories = ["command-line-utilities", "science::geo", "visualization"]
 
 [workspace.dependencies]
 waypoint-core = { path = "crates/waypoint-core" }

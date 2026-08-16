@@ -1,6 +1,10 @@
 # GN-183 Waypoint
 
 [![CI](https://github.com/arunkumar-mourougappane/GN-183-Waypoint-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/arunkumar-mourougappane/GN-183-Waypoint-rs/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/arunkumar-mourougappane/GN-183-Waypoint-rs?sort=semver)](https://github.com/arunkumar-mourougappane/GN-183-Waypoint-rs/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Rust 1.88+](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://www.rust-lang.org)
+[![Platforms](https://img.shields.io/badge/platforms-linux%20%7C%20macos%20%7C%20windows-lightgrey.svg)](#running)
 
 GN-183 Waypoint is a high-precision telemetry and NMEA 0183 debugging suite built in Rust. Designed to ingest raw GPS data streams via Serial COM, TCP networks, or static log files, Waypoint translates continuous comma-separated payloads into a real-time navigational dashboard.
 
@@ -124,3 +128,20 @@ job spanning Linux, macOS and Windows. Building on Linux needs a few system
 packages that the other platforms ship with their SDKs — `libudev-dev` for
 `serialport`, and the xkb/xcb headers for the windowing stack; see
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) for the exact list.
+
+Requires **Rust 1.88 or newer** — let-chains are used throughout, and they
+stabilised there in the 2024 edition.
+
+## Releasing
+
+Pushing a `v*.*.*` tag builds both binaries for Linux, macOS and Windows and
+attaches them to a **draft** GitHub release, with
+[`RELEASE_NOTES.md`](RELEASE_NOTES.md) as the body. It is left as a draft
+deliberately: a release is outward-facing, so it gets a look before anyone can
+download it.
+
+```sh
+git tag -a v0.1.0 -m "v0.1.0" && git push origin v0.1.0
+```
+
+`workflow_dispatch` rebuilds an existing tag without moving it.
