@@ -19,6 +19,15 @@ CI runs those three on Linux, macOS and Windows — see
 | Key bindings | The `Action` mapping is extracted from the event loop precisely so it can be tested |
 | CLI defaults | What each invocation resolves to, because a default is not visible anywhere else |
 
+## What hardware has confirmed
+
+TCP is verified against a real receiver —
+[tab5-gps-monitor](https://github.com/arunkumar-mourougappane/tab5-gps-monitor)
+serving NMEA over its access point on port 10110 — including capturing a session
+to a log. Everything else here is tested against files, sockets and fixtures,
+which is worth remembering when reading the rest of this page: the serial path
+in particular has never met a UART.
+
 ## A packaging caveat
 
 One TUI test includes `assets/sample.nmea` from the repository root, which is

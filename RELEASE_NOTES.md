@@ -89,12 +89,14 @@ the full flag list and the terminal's keys.
 
 Worth reading before trusting it with something important.
 
-- **Serial and TCP have not been exercised against real hardware.** The code
-  paths compile, are unit-tested, and handle reconnection, but every end-to-end
-  run so far has been from a file. This is the most likely place for a surprise,
-  and [tab5-gps-monitor](https://github.com/arunkumar-mourougappane/tab5-gps-monitor)
-  is the device to try first: UART at 115200, or TCP 10110 over its `Tab5-GPS`
-  access point.
+- **Serial has not been exercised against real hardware.** TCP has: it is
+  verified against
+  [tab5-gps-monitor](https://github.com/arunkumar-mourougappane/tab5-gps-monitor)
+  over that device's `Tab5-GPS` access point on port 10110, including recording.
+  The serial path compiles, is unit-tested and handles reconnection, but every
+  end-to-end run of it has been from a file or a local socket, so it is the
+  remaining place for a surprise — UART at 115200 on the same device is the
+  thing to try.
 - **Correctness is checked against a generated fixture**, which proves the
   parser handles real receiver *shapes* — fractional timestamps, multi-talker
   GSA, untracked satellites, damaged sentences — but not that it produces
