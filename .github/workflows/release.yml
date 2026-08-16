@@ -82,7 +82,7 @@ jobs:
           (cd dist && 7z a "$name.zip" "$name" >/dev/null)
           echo "ASSET=dist/$name.zip" >> "$GITHUB_ENV"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.target }}
           path: ${{ env.ASSET }}
