@@ -19,6 +19,11 @@ no line breaks), TCP (with backoff), and log files — the three ways
 [tab5-gps-monitor](https://github.com/arunkumar-mourougappane/tab5-gps-monitor)
 emits NMEA, which is the hardware this was written for.
 
+**Recording closes the loop.** A live stream can be captured to a log the file
+source replays, so a receiver misbehaving in the field can be pushed, paused and
+scrubbed at a desk. Live sources only, and written verbatim — damaged sentences
+included, since those are usually the reason for recording.
+
 **Live and recorded are treated differently**, because they are different. A
 recording gets a transport — pause, rate, restart, and a scrub bar that seeks
 rather than merely reporting, working while paused. A receiver gets liveness

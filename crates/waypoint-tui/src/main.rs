@@ -51,6 +51,15 @@ async fn main() -> Result<()> {
     let engine = Engine::new(TripConfig::default());
     engine.set_source(config);
 
+    if let Some(path) = &cli.options.record {
+        // Refused rather than ignored: a capture silently not happening is the
+        // worst outcome for someone who asked for one.
+        engine
+            .start_recording(path)
+            .await
+            .map_err(|err| anyhow::anyhow!("{err}"))?;
+    }
+
     let basemap = Basemap::new(!cli.options.no_map);
     if let Some(cache) = basemap.cache_dir() {
         // Worth recording: it is where to look when the map works at a desk and
@@ -118,14 +127,38 @@ async fn run(
                             control.seek_to(fraction);
                         }
                     }
+                    Action::ToggleRecording => {
+                        if engine.recording().is_some() {
+                            engine.stop_recording();
+                        } else if engine.can_record() {
+                            // Nobody wants to name a file mid-incident, so one
+                            // is named after the moment it started.
+                            let name = waypoint_core::record::default_filename(chrono::Utc::now());
+                            if let Err(err) = engine.start_recording(&name).await {
+                                tracing::warn!(%err, "could not start recording");
+                            }
+                        }
+                    }
                     Action::Ignore => {}
                 }
             }
         }
 
         let transport = Transport::sample(engine);
+        let recording = engine.recording();
+        let can_record = engine.can_record();
         let state = engine.state();
-        terminal.draw(|frame| ui::draw(frame, &state, bottom, &transport, basemap))?;
+        terminal.draw(|frame| {
+            ui::draw(
+                frame,
+                &state,
+                bottom,
+                &transport,
+                basemap,
+                recording.as_ref(),
+                can_record,
+            )
+        })?;
     }
 }
 
@@ -196,6 +229,8 @@ enum Action {
     /// Scrub by a fraction of the log, the keyboard's answer to dragging.
     SeekBy(f32),
     SeekTo(f32),
+    /// Start or stop capturing a live stream.
+    ToggleRecording,
     Ignore,
 }
 
@@ -214,6 +249,7 @@ impl Action {
             KeyCode::Left => Action::SeekBy(-0.05),
             KeyCode::Right => Action::SeekBy(0.05),
             KeyCode::Home => Action::SeekTo(0.0),
+            KeyCode::Char('w') => Action::ToggleRecording,
             _ => Action::Ignore,
         }
     }
@@ -285,6 +321,11 @@ mod tests {
             other => panic!("unexpected {other:?}"),
         }
         assert_eq!(control.speed(), 1.0);
+    }
+
+    #[test]
+    fn recording_key_is_bound() {
+        assert_eq!(Action::for_key(KeyCode::Char('w')), Action::ToggleRecording);
     }
 
     #[test]

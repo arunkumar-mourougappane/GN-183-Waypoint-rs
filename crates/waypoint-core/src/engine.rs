@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard};
 use tokio::sync::{mpsc, watch};
 
 use crate::parser::Aggregator;
+use crate::record::{Recorder, RecordingStatus};
 use crate::source::{
     Cancel, FileMode, ReplayControl, SourceConfig, SourceControls, SourceEvent, run_source,
 };
@@ -27,6 +28,8 @@ pub struct Engine {
     updates_rx: watch::Receiver<u64>,
     config: TripConfig,
     active: Mutex<Option<ActiveSource>>,
+    /// Shared with the ingest task, which offers it every line that arrives.
+    recorder: Arc<Mutex<Option<Recorder>>>,
 }
 
 struct ActiveSource {
@@ -44,6 +47,7 @@ impl Engine {
             updates_rx,
             config,
             active: Mutex::new(None),
+            recorder: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -122,6 +126,7 @@ impl Engine {
             Arc::clone(&self.state),
             self.updates_tx.clone(),
             self.config,
+            Arc::clone(&self.recorder),
         ));
 
         if let Ok(mut active) = self.active.lock() {
@@ -136,6 +141,49 @@ impl Engine {
         {
             previous.cancel.cancel();
         }
+    }
+
+    /// Begin capturing the incoming stream to `path`.
+    ///
+    /// Live sources only. A recording is how a receiver's misbehaviour gets from
+    /// the field to a desk, where it can be replayed and scrubbed; a file source
+    /// is already that, so capturing one would only copy it.
+    pub async fn start_recording(&self, path: impl AsRef<std::path::Path>) -> Result<(), String> {
+        match self.controls() {
+            Some(SourceControls::Live) => {}
+            Some(_) => return Err("only a live source can be recorded".into()),
+            None => return Err("no source is running".into()),
+        }
+
+        let recorder = Recorder::start(path)
+            .await
+            .map_err(|err| format!("could not start recording: {err}"))?;
+        *self.recorder.lock().unwrap_or_else(|e| e.into_inner()) = Some(recorder);
+        self.notify();
+        Ok(())
+    }
+
+    /// Close the capture. The file is flushed as the recorder is dropped.
+    pub fn stop_recording(&self) {
+        self.recorder
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        self.notify();
+    }
+
+    pub fn recording(&self) -> Option<RecordingStatus> {
+        self.recorder
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .map(Recorder::status)
+    }
+
+    /// Whether capturing is possible right now, which is what decides if the
+    /// control is offered at all.
+    pub fn can_record(&self) -> bool {
+        self.controls().is_some_and(SourceControls::is_live)
     }
 
     /// Clear track, plots and trip statistics without disturbing the connection.
@@ -163,6 +211,7 @@ async fn ingest(
     state: Arc<RwLock<GnssState>>,
     updates: watch::Sender<u64>,
     config: TripConfig,
+    recorder: Arc<Mutex<Option<Recorder>>>,
 ) {
     let mut aggregator = Aggregator::new(config);
 
@@ -170,7 +219,16 @@ async fn ingest(
         {
             let mut state = state.write().unwrap_or_else(|err| err.into_inner());
             match event {
-                SourceEvent::Line(line) => aggregator.ingest_line(&mut state, &line),
+                SourceEvent::Line(line) => {
+                    // Captured before parsing, so the file holds what arrived
+                    // rather than what could be understood.
+                    if let Ok(guard) = recorder.lock()
+                        && let Some(recorder) = guard.as_ref()
+                    {
+                        recorder.write(&line);
+                    }
+                    aggregator.ingest_line(&mut state, &line);
+                }
                 SourceEvent::Status(status) => {
                     tracing::info!(status = %status.label(), "source status");
                     state.connection = status;

@@ -36,6 +36,7 @@ fn main() -> Result<()> {
     // keep alive alongside it.
     let runtime = tokio::runtime::Runtime::new()?;
     let initial_source = cli.source.to_config(&cli.options);
+    let initial_recording = cli.options.record.clone();
 
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
@@ -48,7 +49,14 @@ fn main() -> Result<()> {
     eframe::run_native(
         "waypoint",
         options,
-        Box::new(move |cc| Ok(Box::new(WaypointApp::new(cc, runtime, initial_source)))),
+        Box::new(move |cc| {
+            Ok(Box::new(WaypointApp::new(
+                cc,
+                runtime,
+                initial_source,
+                initial_recording,
+            )))
+        }),
     )
     .map_err(|err| anyhow::anyhow!("{err}"))
 }

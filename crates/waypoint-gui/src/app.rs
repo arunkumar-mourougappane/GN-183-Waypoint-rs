@@ -7,8 +7,8 @@ use tokio::runtime::{Handle, Runtime};
 use walkers::sources::OpenStreetMap;
 use walkers::{HttpOptions, HttpTiles, Map, MapMemory};
 use waypoint_core::{
-    COMMON_BAUD_RATES, Engine, FileMode, ReplayControl, SourceConfig, SourceControls, StatusTone,
-    TripConfig, available_serial_ports,
+    COMMON_BAUD_RATES, Engine, FileMode, RecordingStatus, ReplayControl, SourceConfig,
+    SourceControls, StatusTone, TripConfig, available_serial_ports,
 };
 
 use crate::map::{TrackPlugin, map_center};
@@ -33,6 +33,15 @@ enum PickerAction {
     None,
     Connect,
     Disconnect,
+}
+
+/// Deferred for the same reason as the picker's: the state read guard is held
+/// while the bar is drawn, and starting a capture is async.
+#[derive(Debug, Clone, PartialEq)]
+enum RecordAction {
+    None,
+    Start(PathBuf),
+    Stop,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -142,6 +151,7 @@ impl WaypointApp {
         cc: &eframe::CreationContext<'_>,
         runtime: Runtime,
         initial_source: Option<SourceConfig>,
+        initial_recording: Option<PathBuf>,
     ) -> Self {
         let handle = runtime.handle().clone();
         let engine = Engine::new(TripConfig::default());
@@ -151,6 +161,15 @@ impl WaypointApp {
             form.apply(config);
             let _guard = handle.enter();
             engine.set_source(config.clone());
+        }
+
+        if let Some(path) = initial_recording {
+            let _guard = handle.enter();
+            if let Err(err) = handle.block_on(engine.start_recording(&path)) {
+                // Loud, not silent: someone who asked for a capture needs to
+                // know it is not happening.
+                tracing::error!(%err, "could not start recording");
+            }
         }
 
         // Repaint when new data lands rather than polling on a timer — a GPS
@@ -306,6 +325,8 @@ impl eframe::App for WaypointApp {
         let live_control = self.engine.replay_control();
         let mut picker_action = PickerAction::None;
         let mut restart = false;
+        let mut record_action = RecordAction::None;
+        let recording = self.engine.recording();
 
         egui::Panel::top("top").show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -340,9 +361,13 @@ impl eframe::App for WaypointApp {
                         }
                     }
                     // A receiver gets liveness: is data still arriving, how fast.
+                    // And a capture control, since it is the only kind of source
+                    // that produces something worth keeping.
                     Some(SourceControls::Live) => {
                         ui.separator();
                         live_bar(ui, &state);
+                        ui.separator();
+                        record_bar(ui, recording.as_ref(), &mut record_action);
                     }
                     Some(SourceControls::Instant) | None => {}
                 }
@@ -437,6 +462,19 @@ impl eframe::App for WaypointApp {
         drop(state);
         if restart {
             self.engine.restart();
+        }
+        match record_action {
+            RecordAction::Start(path) => {
+                let engine = &self.engine;
+                let _guard = self.handle.enter();
+                // Blocking briefly on file creation keeps the failure attached
+                // to the click that caused it.
+                if let Err(err) = self.handle.block_on(engine.start_recording(&path)) {
+                    tracing::warn!(%err, "could not start recording");
+                }
+            }
+            RecordAction::Stop => self.engine.stop_recording(),
+            RecordAction::None => {}
         }
         match picker_action {
             PickerAction::Connect => self.connect(),
@@ -552,6 +590,59 @@ fn live_bar(ui: &mut egui::Ui, state: &waypoint_core::GnssState) {
                 .color(Color32::from_rgb(0, 176, 240)),
         )
         .on_hover_text("Sentences arriving per second");
+    }
+}
+
+/// Capture controls. Live sources only: a recorded log is already what this
+/// would produce, so offering it there would just copy a file.
+fn record_bar(ui: &mut egui::Ui, recording: Option<&RecordingStatus>, action: &mut RecordAction) {
+    match recording {
+        Some(capture) if capture.failed => {
+            ui.label(
+                RichText::new("● REC FAILED")
+                    .size(12.0)
+                    .strong()
+                    .color(Color32::from_rgb(220, 80, 80)),
+            )
+            .on_hover_text(format!("{} could not be written", capture.path.display()));
+            if ui.button("Stop").clicked() {
+                *action = RecordAction::Stop;
+            }
+        }
+        Some(capture) => {
+            ui.label(
+                RichText::new(format!("● REC {}", capture.size_label()))
+                    .size(12.0)
+                    .strong()
+                    .color(Color32::from_rgb(220, 80, 80)),
+            )
+            .on_hover_text(format!(
+                "{} — {} sentences{}",
+                capture.path.display(),
+                capture.sentences,
+                if capture.dropped > 0 {
+                    format!(", {} dropped", capture.dropped)
+                } else {
+                    String::new()
+                }
+            ));
+            if ui.button("Stop").clicked() {
+                *action = RecordAction::Stop;
+            }
+        }
+        None => {
+            if ui
+                .button("● Record")
+                .on_hover_text("Capture this stream to a log you can replay")
+                .clicked()
+                && let Some(path) = rfd::FileDialog::new()
+                    .set_file_name(waypoint_core::record::default_filename(chrono::Utc::now()))
+                    .add_filter("NMEA logs", &["nmea"])
+                    .save_file()
+            {
+                *action = RecordAction::Start(path);
+            }
+        }
     }
 }
 

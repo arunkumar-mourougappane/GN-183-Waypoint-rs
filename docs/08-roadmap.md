@@ -61,7 +61,14 @@ divide exactly by any replay rate.
   tiles and stroked onto the same canvas. Online when reachable, from a platform
   cache when not. See [`06-ui-tui.md`](06-ui-tui.md).
 
-## Phase 8 — Polish (open)
+## Phase 8 — Recording ✅
+
+- Live sources can be captured to a log the file source replays, closing the
+  loop between the two source kinds. Live-only, verbatim including damaged
+  sentences, with drops surfaced rather than hidden. See
+  [`02-data-sources.md`](02-data-sources.md).
+
+## Phase 9 — Polish (open)
 
 - Offline map tiles (`.pmtiles`) for the **GUI**; `walkers` supports them
   natively, and the TUI already has its own cache.
@@ -87,9 +94,6 @@ divide exactly by any replay rate.
 - Simultaneous GUI+TUI against one live session. `Engine` already supports
   multiple subscribers, so this is a frontend-launcher question, not an
   architectural one — not built until there is a concrete need.
-- Recording a live session to a log the file source can replay. It would close
-  the loop between the two source kinds and is the most obviously missing
-  live-only feature, but nothing has needed it yet.
 - Map zoom/pan and a runtime source picker in the TUI, and a polar sky view —
   each deliberately GUI-only, with reasons in [`06-ui-tui.md`](06-ui-tui.md).
 - AIS, route planning, receiver configuration — see

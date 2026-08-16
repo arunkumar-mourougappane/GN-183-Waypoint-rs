@@ -9,7 +9,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::canvas::{Canvas, Line as CanvasLine, Points};
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Sparkline, Table};
 use waypoint_core::{
-    Constellation, FixMode, GnssState, KNOTS_TO_KMH, SentenceOutcome, StatusTone, hdop_rating,
+    Constellation, FixMode, GnssState, KNOTS_TO_KMH, RecordingStatus, SentenceOutcome, StatusTone,
+    hdop_rating,
 };
 
 use crate::Transport;
@@ -39,6 +40,8 @@ pub fn draw(
     bottom: BottomPanel,
     transport: &Transport,
     basemap: &Basemap,
+    recording: Option<&RecordingStatus>,
+    can_record: bool,
 ) {
     // A replay gets a second header row for its transport, the way a player
     // puts the scrub bar on its own line rather than crowding the status.
@@ -55,7 +58,7 @@ pub fn draw(
     ])
     .areas(frame.area());
 
-    draw_header(frame, header, state, transport);
+    draw_header(frame, header, state, transport, recording);
 
     let [track_area, side] =
         Layout::horizontal([Constraint::Min(30), Constraint::Length(40)]).areas(main);
@@ -78,7 +81,7 @@ pub fn draw(
         BottomPanel::RawSentences => draw_raw(frame, bottom_area, state),
     }
 
-    draw_footer(frame, footer, transport);
+    draw_footer(frame, footer, transport, recording.is_some(), can_record);
 }
 
 /// A media-player scrub bar drawn in text: played portion filled, a handle at
@@ -151,7 +154,13 @@ fn constellation_color(constellation: Constellation) -> Color {
     }
 }
 
-fn draw_header(frame: &mut Frame, area: Rect, state: &GnssState, transport: &Transport) {
+fn draw_header(
+    frame: &mut Frame,
+    area: Rect,
+    state: &GnssState,
+    transport: &Transport,
+    recording: Option<&RecordingStatus>,
+) {
     let counters = &state.counters;
     let source = if state.source_label.is_empty() {
         "no source".to_string()
@@ -214,6 +223,29 @@ fn draw_header(frame: &mut Frame, area: Rect, state: &GnssState, transport: &Tra
                 format!("   {:.1} msg/s", health.sentences_per_sec),
                 Style::default().fg(Color::Cyan),
             ));
+        }
+    }
+
+    // A capture in progress is worth seeing at a glance, and a failed one is
+    // worth seeing loudly: a recording nobody notices has stopped is worse than
+    // never having started it.
+    if let Some(capture) = recording {
+        if capture.failed {
+            status.push(Span::styled(
+                "   ● REC FAILED",
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            ));
+        } else {
+            status.push(Span::styled(
+                format!("   ● REC {}", capture.size_label()),
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            ));
+            if capture.dropped > 0 {
+                status.push(Span::styled(
+                    format!(" ({} dropped)", capture.dropped),
+                    Style::default().fg(Color::Yellow),
+                ));
+            }
         }
     }
 
@@ -777,9 +809,15 @@ fn draw_raw(frame: &mut Frame, area: Rect, state: &GnssState) {
     );
 }
 
-fn draw_footer(frame: &mut Frame, area: Rect, transport: &Transport) {
+fn draw_footer(
+    frame: &mut Frame,
+    area: Rect,
+    transport: &Transport,
+    recording: bool,
+    can_record: bool,
+) {
     // Only advertise keys that do something for the source in hand.
-    let keys = match transport {
+    let mut keys = match transport {
         Transport::Replay { paused, .. } => {
             let play = if *paused {
                 "space resume"
@@ -795,6 +833,15 @@ fn draw_footer(frame: &mut Frame, area: Rect, transport: &Transport) {
             " q quit   r reset trip   n toggle raw/plots ".to_string()
         }
     };
+
+    // Recording is live-only, so the key is only advertised where it works.
+    if can_record || recording {
+        keys.push_str(if recording {
+            "  w stop recording "
+        } else {
+            "  w record "
+        });
+    }
     frame.render_widget(
         Paragraph::new(keys).alignment(Alignment::Left).dark_gray(),
         area,
@@ -829,7 +876,7 @@ mod tests {
         // Disabled, so rendering never reaches for the network.
         let basemap = Basemap::new(false);
         terminal
-            .draw(|frame| draw(frame, &state, bottom, transport, &basemap))
+            .draw(|frame| draw(frame, &state, bottom, transport, &basemap, None, false))
             .unwrap();
         buffer_text(&terminal)
     }
@@ -925,6 +972,8 @@ mod tests {
                         progress: Some(1.0),
                     },
                     &Basemap::new(false),
+                    None,
+                    false,
                 )
             })
             .unwrap();
@@ -932,6 +981,72 @@ mod tests {
 
         assert!(out.contains("End of log"), "expected end-of-log in:\n{out}");
         assert!(!out.contains("Disconnected"));
+    }
+
+    /// Capturing is live-only, and a capture in progress has to be visible —
+    /// an unnoticed recording is as bad as none.
+    #[test]
+    fn a_capture_in_progress_is_shown() {
+        let state = sample_state();
+        let capture = RecordingStatus {
+            path: "drive.nmea".into(),
+            sentences: 120,
+            bytes: 8_192,
+            dropped: 0,
+            failed: false,
+        };
+
+        let mut terminal = Terminal::new(TestBackend::new(140, 40)).unwrap();
+        terminal
+            .draw(|frame| {
+                draw(
+                    frame,
+                    &state,
+                    BottomPanel::Plots,
+                    &Transport::Live,
+                    &Basemap::new(false),
+                    Some(&capture),
+                    true,
+                )
+            })
+            .unwrap();
+        let out = buffer_text(&terminal);
+
+        assert!(
+            out.contains("● REC"),
+            "missing capture indicator in:\n{out}"
+        );
+        assert!(out.contains("8.0 kB"), "missing captured size in:\n{out}");
+        assert!(out.contains("w stop recording"));
+    }
+
+    #[test]
+    fn a_failed_capture_is_called_out() {
+        let state = sample_state();
+        let capture = RecordingStatus {
+            path: "drive.nmea".into(),
+            sentences: 12,
+            bytes: 800,
+            dropped: 4,
+            failed: true,
+        };
+
+        let mut terminal = Terminal::new(TestBackend::new(140, 40)).unwrap();
+        terminal
+            .draw(|frame| {
+                draw(
+                    frame,
+                    &state,
+                    BottomPanel::Plots,
+                    &Transport::Live,
+                    &Basemap::new(false),
+                    Some(&capture),
+                    true,
+                )
+            })
+            .unwrap();
+
+        assert!(buffer_text(&terminal).contains("REC FAILED"));
     }
 
     /// A receiver gets liveness and acquisition instead, and none of the
@@ -947,6 +1062,22 @@ mod tests {
         assert!(!out.contains("space pause"));
         assert!(!out.contains("←/→ seek"));
         assert!(!out.contains("R restart"));
+    }
+
+    /// Replaying a log offers no capture control, because capturing one would
+    /// only copy it.
+    #[test]
+    fn a_replay_is_never_offered_recording() {
+        let out = render_transport(
+            BottomPanel::Plots,
+            &Transport::Replay {
+                speed: 1.0,
+                paused: false,
+                progress: Some(0.5),
+            },
+        );
+        assert!(!out.contains("w record"));
+        assert!(!out.contains("● REC"));
     }
 
     /// The bar's handle has to track the position, or it is decoration.

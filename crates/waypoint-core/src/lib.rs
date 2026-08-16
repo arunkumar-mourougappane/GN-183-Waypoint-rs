@@ -29,12 +29,14 @@
 
 pub mod engine;
 pub mod parser;
+pub mod record;
 pub mod source;
 pub mod state;
 pub mod trip;
 
 pub use engine::Engine;
 pub use parser::{Aggregator, ChecksumResult, verify_checksum};
+pub use record::{Recorder, RecordingStatus};
 pub use source::{
     COMMON_BAUD_RATES, FileMode, ReplayControl, SourceConfig, SourceControls, SourceEvent,
     available_serial_ports,

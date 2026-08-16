@@ -65,6 +65,7 @@ The GUI can also be started with no source and configured from its **Source…**
 | `--file <PATH>` | Read a recorded log |
 | `--speed X` | Replay rate; a log replays at real time by default |
 | `--instant` | Parse a log as fast as it can be read, skipping to the finished track. No transport, since there is nothing left to control |
+| `--record <PATH>` | Capture a live stream to a log you can replay later. Live sources only |
 | `--list-ports` | Print available serial ports and exit |
 | `--no-map` | TUI only: skip the basemap and make no network requests |
 
@@ -114,9 +115,15 @@ can honour:
 | Seekable scrub bar | — | ✓ | — |
 | Data rate, stale warning | ✓ | — | — |
 | Time to first fix | ✓ | — | — |
+| Record to a replayable log | ✓ | — | — |
 
 Rate and pause apply to a replay already in progress, without restarting it and
 losing the track accumulated so far.
+
+Recording closes the loop between the two: capture a receiver misbehaving in the
+field, then pause, rewind and scrub over the failure at a desk. What is written
+is the raw stream verbatim, damaged sentences included — a recording that were
+tidier than the wire could not reproduce the fault worth recording.
 
 The terminal draws a basemap too — roads, water and green space from vector
 tiles, stroked onto the same braille canvas as the track. Tiles are fetched when
@@ -132,6 +139,9 @@ rather than a gap.
 ### TUI keys
 
 `q` quit · `r` reset trip · `n` toggle the plots/raw-sentence panel.
+
+On a live source: `w` starts and stops recording, into a timestamped file in the
+working directory.
 
 While replaying: `space` pause/resume · `←`/`→` scrub ±5% · `Home` jump to the
 start · `-`/`+` halve/double the rate · `1` back to real time · `R` restart.

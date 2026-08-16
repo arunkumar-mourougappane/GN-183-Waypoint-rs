@@ -40,6 +40,30 @@ Several of the parser's more awkward cases come straight from that receiver: fiv
 `GNGSA` sentences per epoch under one talker, a constellation reporting nothing
 in view, and timestamps that drift off the whole second.
 
+## Recording
+
+Live sources can be captured to a log the file source replays, which is the loop
+the two halves of this design exist to close: a receiver misbehaves in the
+field, you record it, and then you can pause, rewind and scrub over the failure
+at a desk as often as it takes.
+
+- **Live only.** A recorded log is already what a capture would produce, so
+  offering it there would only copy a file. `Engine::start_recording` refuses a
+  non-live source rather than doing something surprising.
+- **Verbatim, including damage.** Sentences are written before parsing, so
+  checksum failures and malformed lines land in the file exactly as they
+  arrived. A recording tidier than the wire cannot reproduce the fault that made
+  it worth recording.
+- **Written on its own task**, fed through a bounded queue. If the disk falls
+  behind, sentences are counted as dropped rather than stalling a dashboard that
+  has a live receiver to keep up with — and the drop count is shown, because a
+  recording with a hole in it should say so.
+- Output is flushed about once a second, so a crash costs a second of capture
+  rather than everything since the last full buffer.
+
+A round-trip test asserts a capture reparses to the same counters as the session
+it came from, damaged sentences included.
+
 ## Live versus recorded
 
 Uniform *ingestion* does not mean a uniform UI. The meaningful split is not
