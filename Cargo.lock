@@ -1968,6 +1968,53 @@ dependencies = [
 ]
 
 [[package]]
+name = "gn183-waypoint-core"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "nmea",
+ "serialport",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "gn183-waypoint-gui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "eframe",
+ "egui_plot",
+ "gn183-waypoint-core",
+ "rfd",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "walkers",
+]
+
+[[package]]
+name = "gn183-waypoint-tui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "directories",
+ "geo-types",
+ "gn183-waypoint-core",
+ "mvt-reader",
+ "ratatui",
+ "reqwest",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "gpu-allocator"
 version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5904,53 +5951,6 @@ dependencies = [
  "log",
  "once_cell",
  "pkg-config",
-]
-
-[[package]]
-name = "waypoint-core"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "nmea",
- "serialport",
- "thiserror 2.0.20",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "waypoint-gui"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "clap",
- "eframe",
- "egui_plot",
- "rfd",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "walkers",
- "waypoint-core",
-]
-
-[[package]]
-name = "waypoint-tui"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "clap",
- "directories",
- "geo-types",
- "mvt-reader",
- "ratatui",
- "reqwest",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "waypoint-core",
 ]
 
 [[package]]

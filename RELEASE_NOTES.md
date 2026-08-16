@@ -48,6 +48,30 @@ visible in the track — this is a debugger, so bad fixes are worth seeing.
   headers for the windowing stack. macOS and Windows get these from their SDKs.
   The exact list is in `.github/workflows/ci.yml`.
 
+## Installing
+
+Prebuilt binaries for Linux, macOS and Windows are attached to this release.
+Unpack and run — both frontends are in the archive.
+
+From crates.io:
+
+```sh
+cargo install gn183-waypoint-tui   # terminal dashboard
+cargo install gn183-waypoint-gui   # map dashboard
+```
+
+The packages are published as `gn183-waypoint-core`, `gn183-waypoint-gui` and
+`gn183-waypoint-tui`, after the repository — plain `waypoint-core` was already
+taken on crates.io by an unrelated SQL migration library. The commands you
+actually type are unchanged: the binaries are still `waypoint-gui` and
+`waypoint-tui`, and the library is still `waypoint_core` in code.
+
+Or from source:
+
+```sh
+cargo build --release --workspace
+```
+
 ## Getting started
 
 No hardware needed — a sample log ships with it:
@@ -87,6 +111,12 @@ Worth reading before trusting it with something important.
   picker — sources are chosen with command-line flags.
 - **Trip statistics exclude dead-reckoned fixes** (GGA quality 6) from the track
   and totals. They are still counted and shown in the raw view.
+- **A recording is flushed about once a second**, so a process that is killed
+  rather than quit can lose up to a second of capture. Quitting normally, or
+  stopping the recording, flushes everything.
+- **`cargo test` does not run from the published `gn183-waypoint-tui` tarball.**
+  One test includes the shared sample log from the repository root, which is
+  outside the package. Building and installing are unaffected.
 
 ## Attribution and licensing
 

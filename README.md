@@ -25,6 +25,15 @@ Both frontends render the same `GnssState` from `waypoint-core`; neither depends
 on the other's dependencies, which is what keeps the terminal build usable on a
 machine with no windowing system.
 
+On crates.io the packages are `gn183-waypoint-core`, `gn183-waypoint-gui` and
+`gn183-waypoint-tui` — named after the repository, because plain `waypoint-core`
+belongs to an unrelated crate. The binaries you type stay `waypoint-gui` and
+`waypoint-tui`, and the library is still `waypoint_core` in code.
+
+```sh
+cargo install gn183-waypoint-tui
+```
+
 [`docs/`](docs/) covers the protocol, the design and the reasoning:
 [overview](docs/00-overview.md) ·
 [NMEA reference](docs/01-nmea-protocol.md) ·

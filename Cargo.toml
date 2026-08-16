@@ -15,7 +15,7 @@ keywords = ["nmea", "gps", "gnss", "tui", "debugger"]
 categories = ["command-line-utilities", "science::geo", "visualization"]
 
 [workspace.dependencies]
-waypoint-core = { path = "crates/waypoint-core" }
+waypoint-core = { package = "gn183-waypoint-core", path = "crates/waypoint-core", version = "0.1.0" }
 
 nmea = "0.8"
 serialport = "4.9"

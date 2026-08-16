@@ -19,6 +19,14 @@ CI runs those three on Linux, macOS and Windows — see
 | Key bindings | The `Action` mapping is extracted from the event loop precisely so it can be tested |
 | CLI defaults | What each invocation resolves to, because a default is not visible anywhere else |
 
+## A packaging caveat
+
+One TUI test includes `assets/sample.nmea` from the repository root, which is
+outside that crate's package directory. Publishing and installing are unaffected
+— `cargo publish` verifies by building, not testing — but `cargo test` will not
+compile from the published tarball. Running the tests means running them from
+the repository, which is where anyone changing this code already is.
+
 ## Lessons the bugs taught
 
 Each of these cost real debugging time and is worth not repeating.

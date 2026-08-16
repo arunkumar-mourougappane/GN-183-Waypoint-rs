@@ -1,5 +1,5 @@
 [package]
-name = "waypoint-gui"
+name = "gn183-waypoint-gui"
 description = "Map dashboard for the Waypoint NMEA 0183 debugger"
 version.workspace = true
 edition.workspace = true
