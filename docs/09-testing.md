@@ -28,6 +28,24 @@ to a log. Everything else here is tested against files, sockets and fixtures,
 which is worth remembering when reading the rest of this page: the serial path
 in particular has never met a UART.
 
+## A dependency that cannot be updated
+
+`Cargo.lock` pins `serde_with 3.11.0`, against which there is a security
+advisory (fixed in 3.21.0). It is ignored in `.github/dependabot.yml`, for two
+reasons worth stating rather than burying:
+
+- It is **not compiled**. `serde_with` is an optional dependency of `nmea`,
+  behind a `serde` feature this workspace does not enable. `Cargo.lock` records
+  dependencies irrespective of feature activation, so it appears there while
+  having no dependency edge and producing no build artifact.
+- It **cannot be updated anyway**. `nmea 0.8.0` requires `~3.11` — that is,
+  `>= 3.11.0, < 3.12.0` — so no version satisfying the advisory can resolve.
+  Dependabot retries on every push and fails with `update_not_possible`.
+
+Both conditions have to hold for the entry to stay ignored. If this workspace
+ever enables nmea's `serde` feature, the advisory becomes real and the ignore
+must go.
+
 ## A packaging caveat
 
 One TUI test includes `assets/sample.nmea` from the repository root, which is

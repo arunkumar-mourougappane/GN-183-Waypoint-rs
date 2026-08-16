@@ -1,0 +1,39 @@
+version: 2
+
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # The egui stack moves together and must be upgraded together; separate
+      # PRs for eframe, egui_plot and walkers would each fail on their own.
+      egui:
+        patterns:
+          - eframe
+          - egui*
+          - walkers
+    ignore:
+      # serde_with is an *optional* dependency of nmea, behind a `serde` feature
+      # this workspace does not enable. It appears in Cargo.lock — which records
+      # dependencies irrespective of feature activation — but has no dependency
+      # edge and produces no compiled artifact, so the advisory against
+      # < 3.21.0 cannot reach anything shipped here.
+      #
+      # It also cannot be updated: nmea 0.8.0 requires `~3.11`, meaning
+      # >= 3.11.0, < 3.12.0, so no version satisfying the advisory can resolve.
+      # Dependabot retries the security update on every push, fails with
+      # `update_not_possible`, and reports the job as an error. Ignoring it
+      # states the situation instead of leaving a permanently red job that
+      # trains everyone to disregard Dependabot.
+      #
+      # Revisit when nmea relaxes that requirement, or if this workspace ever
+      # enables nmea's serde feature — at which point the advisory would apply
+      # for real and this entry must go.
+      - dependency-name: serde_with
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
