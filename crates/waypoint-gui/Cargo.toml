@@ -20,7 +20,7 @@ path = "src/main.rs"
 waypoint-core.workspace = true
 eframe = "0.36"
 egui_plot = "0.37"
-walkers = "0.58"
+walkers = "0.59"
 # Native file picker for choosing a log to open.
 rfd = "0.17"
 tokio.workspace = true
