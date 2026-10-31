@@ -18,9 +18,9 @@ path = "src/main.rs"
 
 [dependencies]
 waypoint-core.workspace = true
-eframe = "0.36"
-egui_plot = "0.37"
-walkers = "0.58"
+eframe = "0.37"
+egui_plot = "0.38"
+walkers = "0.64"
 # Native file picker for choosing a log to open.
 rfd = "0.17"
 tokio.workspace = true
